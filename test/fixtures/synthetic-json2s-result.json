@@ -1,0 +1,62 @@
+{
+  "BlastOutput2": [
+    {
+      "report": {
+        "results": {
+          "search": {
+            "hits": [
+              {
+                "description": [
+                  {
+                    "id": "synthetic_hit_1",
+                    "accession": "SYN001",
+                    "title": "Synthetic minimized hit one"
+                  }
+                ],
+                "hsps": [
+                  {
+                    "hseq": "ATG-CCTA",
+                    "qseq": "ATGACCTA",
+                    "hit_from": 5,
+                    "hit_to": 12,
+                    "query_from": 1,
+                    "query_to": 8,
+                    "identity": 7,
+                    "evalue": 0.000001,
+                    "bit_score": 42
+                  },
+                  {
+                    "hseq": "GGGG",
+                    "qseq": "GGGG"
+                  }
+                ]
+              },
+              {
+                "accession": "SYN002",
+                "title": "Synthetic qseq fallback hit",
+                "hsps": [
+                  {
+                    "qseq": "TT-AACC",
+                    "hit_from": 2,
+                    "hit_to": 7,
+                    "query_from": 3,
+                    "query_to": 8
+                  }
+                ]
+              },
+              {
+                "accession": "SYN003",
+                "title": "Synthetic missing hsp sequence",
+                "hsps": [
+                  {
+                    "identity": 0
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
