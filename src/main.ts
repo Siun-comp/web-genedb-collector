@@ -420,6 +420,7 @@ async function handleSubmit(): Promise<void> {
 
 async function pollSearchInfo(manual: boolean): Promise<void> {
   if (!job.rid || job.isBusy) return;
+  if (job.status !== "waiting") return;
   const rid = job.rid;
 
   const now = Date.now();
@@ -769,7 +770,7 @@ async function handleClearRecovery(): Promise<void> {
 }
 
 function canManualPoll(): boolean {
-  return Boolean(job.rid && !job.isBusy && (!job.nextPollAt || Date.now() >= job.nextPollAt));
+  return Boolean(job.rid && job.status === "waiting" && !job.isBusy && (!job.nextPollAt || Date.now() >= job.nextPollAt));
 }
 
 function errorJob(error: unknown, previousLogs: string[]): RuntimeJob {
