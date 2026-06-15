@@ -283,12 +283,15 @@ function render(focusToRestore?: { id: string; start: number | null; end: number
                 <input id="excludeAmbiguousN" type="checkbox" ${state.excludeAmbiguousN ? "checked" : ""} />
                 N 포함 hit를 별도 제외 파일로 분리
               </label>
-              <div class="field full">
-                <label class="checkbox-row">
+              <div class="field full zip-option-field">
+                <label class="checkbox-row checkbox-row-stack">
                   <input id="includeFullProvenance" type="checkbox" ${state.includeFullProvenance !== false ? "checked" : ""} />
-                  Include full provenance records.jsonl
+                  <span>
+                    <span class="checkbox-title">ZIP에 상세 추적 정보 포함</span>
+                    <span class="checkbox-description">각 hit의 accession, 위치, score를 별도 파일에 저장합니다. sequence 본문과 raw BLAST 결과는 넣지 않습니다.</span>
+                  </span>
                 </label>
-                <div class="hint">records.jsonl에는 accession/range/score 등 추적 정보만 저장하고 sequence 본문은 넣지 않습니다. 대용량 ZIP 크기를 줄이고 싶으면 끌 수 있습니다.</div>
+                <div class="hint">대용량 ZIP이 불안정하거나 파일 크기를 줄이고 싶으면 끄세요. 이 옵션은 FASTA 수집 개수에는 영향을 주지 않습니다.</div>
               </div>
             </div>
           </div>
@@ -372,7 +375,7 @@ function render(focusToRestore?: { id: string; start: number | null; end: number
               ${statusLine("Length filter", outputPreview.lengthFilter)}
               ${statusLine("Keyword filter", outputPreview.keywordFilter)}
               ${statusLine("N filter", outputPreview.nFilter)}
-              ${statusLine("Provenance", outputPreview.provenance)}
+              ${statusLine("상세 추적 정보", outputPreview.provenance)}
             </div>
             <ul class="file-list">
               ${zipManifest.files.map((file) => `<li>${escapeHtml(file)}</li>`).join("")}
@@ -850,7 +853,7 @@ async function handleDownloadZip(): Promise<void> {
           {
             ...baseContext,
             fullProvenanceOmissionReason: "zip_degradation_after_primary_failure",
-            processLogs: [...baseContext.processLogs, "ZIP degradation candidate prepared. records.jsonl will be omitted only if primary ZIP generation fails."]
+            processLogs: [...baseContext.processLogs, "ZIP degradation candidate prepared. detailed provenance file will be omitted only if primary ZIP generation fails."]
           }
         )
       : undefined;
@@ -861,7 +864,7 @@ async function handleDownloadZip(): Promise<void> {
     isBusy: true,
     outputBundle: bundle,
     title: "ZIP 생성 중",
-    detail: `${formatZipEstimate(estimate)}. ${state.includeFullProvenance !== false ? "Full provenance records.jsonl will be tried first." : "records.jsonl is disabled by the current option."}`,
+    detail: `${formatZipEstimate(estimate)}. ${state.includeFullProvenance !== false ? "상세 추적 정보 파일을 포함한 ZIP을 먼저 생성합니다." : "현재 옵션에서는 상세 추적 정보 파일을 제외합니다."}`,
     action: "브라우저 다운로드가 시작될 때까지 기다리세요.",
     logs: appendLog(job.logs, `ZIP generation started. uncompressedBytes=${estimate.totalUncompressedBytes}, recordsJsonlBytes=${estimate.recordsJsonlBytes}, risk=${estimate.riskLevel}`)
   };
@@ -875,16 +878,16 @@ async function handleDownloadZip(): Promise<void> {
     const modeDetail =
       result.mode === "primary"
         ? `${fileName} 다운로드를 시작했습니다.`
-        : `${fileName} 다운로드를 시작했습니다. 1차 full ZIP 생성이 실패해 records.jsonl을 제외한 summary-only ZIP으로 회수했습니다.`;
+        : `${fileName} 다운로드를 시작했습니다. 1차 full ZIP 생성이 실패해 상세 추적 정보 파일을 제외한 summary-only ZIP으로 회수했습니다.`;
     downloadBlob(blob, fileName);
     job = {
       ...job,
       status: "done",
       isBusy: false,
       outputBundle: result.bundle,
-      title: result.mode === "primary" ? "ZIP 다운로드 시작" : "ZIP 다운로드 시작 (records.jsonl 제외)",
+      title: result.mode === "primary" ? "ZIP 다운로드 시작" : "ZIP 다운로드 시작 (상세 추적 정보 제외)",
       detail: modeDetail,
-      action: result.mode === "primary" ? "다운로드 폴더에서 ZIP 파일을 확인하세요." : "FASTA와 summary meta는 포함되어 있습니다. full provenance records.jsonl은 이 ZIP에서 제외되었습니다.",
+      action: result.mode === "primary" ? "다운로드 폴더에서 ZIP 파일을 확인하세요." : "FASTA와 summary metadata는 포함되어 있습니다. 상세 추적 정보 파일은 이 ZIP에서 제외되었습니다.",
       logs: appendLog(logs, `ZIP generated. file=${fileName}, bytes=${blob.size}, mode=${result.mode}, uncompressedBytes=${result.estimate.totalUncompressedBytes}`)
     };
     persistSnapshot();
@@ -901,7 +904,7 @@ async function handleDownloadZip(): Promise<void> {
       title: "ZIP 생성 실패",
       detail: message,
       outputBundle: bundle,
-      action: "Parser output is still available in this screen. Try disabling full provenance records.jsonl or lowering max hits, then download ZIP again.",
+      action: "Parser output is still available in this screen. 상세 추적 정보 포함 옵션을 끄거나 max hits를 낮춘 뒤 ZIP 다운로드를 다시 시도하세요.",
       logs
     };
     persistSnapshot();
@@ -1145,14 +1148,14 @@ function restoreFocus(focusToRestore?: { id: string; start: number | null; end: 
 
 function buildOutputPreview(): { header: string; lengthFilter: string; keywordFilter: string; nFilter: string; provenance: string } {
   return {
-    header: ">description_accession 중심, 상세 provenance는 records.jsonl",
+    header: ">description_accession 중심, 상세 추적 정보는 별도 파일",
     lengthFilter: state.lengthFilterEnabled ? `${state.minLengthPercent}%~${state.maxLengthPercent}%` : "사용 안 함",
     keywordFilter: state.keywordFilterEnabled ? parseKeywords(state.keywords).join(", ") || "keyword 없음" : "사용 안 함",
     nFilter: state.excludeAmbiguousN ? "N 포함 hit는 excluded_ambiguous FASTA로 분리" : "N 포함 hit도 aligned FASTA에 포함",
     provenance:
       state.includeFullProvenance !== false
-        ? "records.jsonl included; sequence bodies omitted"
-        : "records.jsonl omitted; summary meta only"
+        ? "상세 추적 정보 포함; sequence 본문 제외"
+        : "상세 추적 정보 제외; summary metadata만 포함"
   };
 }
 
@@ -1240,8 +1243,8 @@ function renderOutputBundle(bundle?: GeneDbOutputBundle): string {
   const provenanceRows = bundle.recordsJsonl === null ? 0 : bundle.recordsJsonl.split(/\r?\n/).filter(Boolean).length;
   const provenanceStatus =
     bundle.recordsJsonl === null
-      ? "records.jsonl omitted; summary meta only"
-      : `${provenanceRows.toLocaleString()} records.jsonl rows; sequence bodies omitted`;
+      ? "상세 추적 정보 제외; summary metadata만 포함"
+      : `${provenanceRows.toLocaleString()}개 hit 추적 정보 포함; sequence 본문 제외`;
   const zipEstimate = estimateGeneDbZipSize(bundle);
   const zipWarnings = zipEstimate.warnings.length
     ? `<div class="warning">${zipEstimate.warnings.map(escapeHtml).join("<br>")}</div>`
@@ -1259,7 +1262,7 @@ function renderOutputBundle(bundle?: GeneDbOutputBundle): string {
       ${statusLine("전체 제외", `${bundle.summary.droppedCount.toLocaleString()} records`)}
       ${statusLine("Unique sequence 참고값", `${bundle.summary.uniqueCount.toLocaleString()} (dedup output 아님)`)}
       ${statusLine("Aligned 길이 범위", `${bundle.summary.minLength.toLocaleString()}-${bundle.summary.maxLength.toLocaleString()} bp`)}
-      ${statusLine("Provenance", provenanceStatus)}
+      ${statusLine("상세 추적 정보", provenanceStatus)}
       ${statusLine("ZIP source estimate", formatZipEstimate(zipEstimate))}
       ${statusLine("ZIP risk", zipEstimate.riskLevel)}
       ${statusLine("Largest ZIP source file", zipEstimate.largestFile ? `${zipEstimate.largestFile.name} (${formatBytes(zipEstimate.largestFile.bytes)})` : "-")}
@@ -1352,7 +1355,7 @@ function formatElapsed(ms: number): string {
 }
 
 function formatZipEstimate(estimate: ZipSizeEstimate): string {
-  const provenance = estimate.recordsJsonlBytes > 0 ? `, records.jsonl ${formatBytes(estimate.recordsJsonlBytes)}` : ", records.jsonl omitted";
+  const provenance = estimate.recordsJsonlBytes > 0 ? `, 상세 추적 정보 ${formatBytes(estimate.recordsJsonlBytes)}` : ", 상세 추적 정보 제외";
   return `${formatBytes(estimate.totalUncompressedBytes)} source text${provenance}`;
 }
 

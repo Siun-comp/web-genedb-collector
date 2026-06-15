@@ -1,5 +1,34 @@
 # Large Result Stability Follow-up Plan
 
+## 2026-06-16 user large-run recheck
+
+The user re-ran the same-condition large test and provided safe process-log counts plus a ZIP file for entry-size inspection. No query sequence, raw BLAST result, FASTA body, API key, personal data, or internal company material was copied into this repository.
+
+- RID: `306JGF97014`
+- taxid: `11320`
+- requested maxHits: `100000`
+- acquisition mode: `streaming_xml`
+- streaming status: `stream_succeeded`
+- responseLength: `139,386,362`
+- completeHitBlocksSeen: `33,289`
+- aligned: `32,947`
+- ambiguous: `195`
+- dropped: `147`
+- partialXmlTail: `true`
+- ZIP mode: `primary`
+- ZIP size: `6,439,812` bytes
+- ZIP source text estimate: `81,617,654` bytes
+- detailed provenance estimate: `36,700,610` bytes
+
+Interpretation:
+
+- This is a successful partial-tail large recovery, not proof that the full requested `100000` maxHits were recovered.
+- Count differences between same-condition RID runs should be interpreted with RID, responseLength, completeHitBlocksSeen, partialXmlTail, and acquisition mode together.
+- The detailed provenance ZIP option is not a collection filter. It controls whether record-level accession/range/score trace information is included in the ZIP.
+- The UI label was changed from implementation-centric `Include full provenance records.jsonl` to a user-facing detailed trace information option.
+
+Detailed note: `docs/USER_LARGE_RUN_RECHECK_2026-06-16.md`
+
 ## 2026-06-16 Phase 9G validation completion
 
 Phase 9G GitHub Pages validation was completed with safe summaries only.

@@ -326,6 +326,41 @@ textarea {
   min-height: 38px;
 }
 
+.checkbox-row input[type="checkbox"] {
+  width: auto;
+}
+
+.checkbox-row-stack {
+  align-items: flex-start;
+}
+
+.checkbox-row-stack input {
+  flex: 0 0 auto;
+  margin-top: 3px;
+}
+
+.checkbox-title {
+  display: block;
+  color: #26384a;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.checkbox-description {
+  display: block;
+  margin-top: 3px;
+  color: #586b7c;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.zip-option-field {
+  border-top: 1px solid #e5ebf0;
+  padding-top: 12px;
+}
+
 .status-panel {
   display: grid;
   gap: 12px;
