@@ -1,6 +1,12 @@
 import "./styles.css";
 import { APP_NAME, BLAST_DEFAULTS, FILTER_DEFAULTS } from "./config/defaults";
 import { parseBlastResultSkeleton, type BlastParseResult } from "./domain/blastResultParser";
+import {
+  applySup12CompatibilityPreset,
+  isDefaultCollectionPresetActive,
+  isSup12CompatibilityPresetActive,
+  SUP12_COMPATIBILITY_PRESET
+} from "./domain/collectionPresets";
 import { buildCollectionStatus } from "./domain/status";
 import { summarizeSequence } from "./domain/fasta";
 import { parseKeywords } from "./domain/filters";
@@ -89,6 +95,8 @@ function render(focusToRestore?: { id: string; start: number | null; end: number
   const zipManifest = buildZipManifest(state.taskName);
   const requestPreview = buildSafeBlastRequestPreview(state);
   const outputPreview = buildOutputPreview();
+  const sup12PresetActive = isSup12CompatibilityPresetActive(state);
+  const defaultPresetActive = isDefaultCollectionPresetActive(state);
   const displayedStatus = validation.canSubmit || job.rid ? job : validationToJob(validationStatus.status, validationStatus.title, validationStatus.detail, validationStatus.nextAction);
 
   appRoot.innerHTML = `
@@ -98,7 +106,7 @@ function render(focusToRestore?: { id: string; start: number | null; end: number
           <h1>${APP_NAME}</h1>
           <p>입력한 DNA sequence를 지정 taxid 안에서 BLAST하여 aligned hit FASTA를 수집하기 위한 정적 웹앱입니다.</p>
         </div>
-        <div class="phase-badge">Phase 5 · IndexedDB recovery</div>
+        <div class="phase-badge">Phase 8 · SUP12 comparison</div>
       </header>
 
       <section class="notice-strip">
@@ -146,6 +154,18 @@ function render(focusToRestore?: { id: string; start: number | null; end: number
             <div class="section-heading">
               <h2>2. BLAST 수집 조건</h2>
               <span class="section-note">NCBI URL API에 보낼 값입니다.</span>
+            </div>
+            <div class="preset-card">
+              <div>
+                <strong>${escapeHtml(SUP12_COMPATIBILITY_PRESET.label)}</strong>
+                <span>${escapeHtml(SUP12_COMPATIBILITY_PRESET.description)}</span>
+              </div>
+              <div class="preset-actions">
+                <span class="preset-state ${sup12PresetActive ? "active" : defaultPresetActive ? "default" : ""}">
+                  ${sup12PresetActive ? "SUP12 preset active" : defaultPresetActive ? "Default settings active" : "Custom settings"}
+                </span>
+                <button class="secondary-button compact" id="applySup12Preset" ${job.isBusy ? "disabled" : ""}>Apply SUP12 preset</button>
+              </div>
             </div>
             <div class="form-grid">
               <div class="field">
@@ -360,6 +380,9 @@ function bindEvents(): void {
   document.querySelector("#downloadZip")?.addEventListener("click", () => {
     void handleDownloadZip();
   });
+  document.querySelector("#applySup12Preset")?.addEventListener("click", () => {
+    handleApplySup12Preset();
+  });
   document.querySelector("#clearRecovery")?.addEventListener("click", () => {
     void handleClearRecovery();
   });
@@ -371,6 +394,21 @@ function bindEvents(): void {
     void clearJobSnapshot();
     render();
   });
+}
+
+function handleApplySup12Preset(): void {
+  if (job.isBusy) return;
+  state = applySup12CompatibilityPreset(state);
+  refreshOutputBundle();
+  job = {
+    ...job,
+    logs: appendLog(
+      job.logs,
+      "SUP12 compatibility preset applied. maxHits=50000, length=80-500%, keywords=synthetic|construct|predicted|unverified, ambiguousN=exclude"
+    )
+  };
+  persistSnapshot();
+  render();
 }
 
 async function handleSubmit(): Promise<void> {
@@ -544,13 +582,16 @@ async function downloadReadyResult(): Promise<void> {
     const result = await downloadBlastResultWithFallback(rid, fetch, { hitlistSize: state.maxHits, ncbiGi: true });
     const parseResult = parseBlastResultSkeleton(result.text, result.format);
     const resultDownloadedAt = Date.parse(result.downloadedAt);
+    const logsBeforeOutput = result.json2FailureReason ? appendLog(job.logs, formatJson2FallbackSuccess(result.json2FailureReason)) : job.logs;
     const outputBundle = buildGeneDbOutputBundle(state, parseResult, {
       rid,
       resultFormat: result.format,
       resultDownloadedAt,
       resultRawLength: result.rawLength,
-      processLogs: job.logs
+      processLogs: logsBeforeOutput
     });
+    const completeHitBlocks = parseResult.diagnostics?.completeHitBlocksSeen;
+    const partialXmlTail = Boolean(parseResult.diagnostics?.partialXmlTail);
     job = {
       ...job,
       status: "done",
@@ -564,8 +605,8 @@ async function downloadReadyResult(): Promise<void> {
       detail: `Aligned=${outputBundle.summary.savedCount}, N 분리=${outputBundle.summary.ambiguousCount}, 제외=${outputBundle.summary.droppedCount}.`,
       action: "결과를 확인한 뒤 ZIP 다운로드를 누르세요.",
       logs: appendLog(
-        result.json2FailureReason ? appendLog(job.logs, `JSON2_S fallback reason: ${result.json2FailureReason}`) : job.logs,
-        `Result downloaded and output prepared. rid=${rid}, format=${result.format}, responseLength=${result.rawLength}, aligned=${outputBundle.summary.savedCount}, ambiguous=${outputBundle.summary.ambiguousCount}, dropped=${outputBundle.summary.droppedCount}`
+        logsBeforeOutput,
+        `Result downloaded and output prepared. rid=${rid}, format=${result.format}, responseLength=${result.rawLength}, aligned=${outputBundle.summary.savedCount}, ambiguous=${outputBundle.summary.ambiguousCount}, dropped=${outputBundle.summary.droppedCount}, completeHitBlocks=${completeHitBlocks ?? "unknown"}, partialXmlTail=${partialXmlTail}`
       )
     };
     persistSnapshot();
@@ -574,6 +615,10 @@ async function downloadReadyResult(): Promise<void> {
     persistSnapshot();
   }
   render();
+}
+
+function formatJson2FallbackSuccess(reason: string): string {
+  return `JSON2_S large download failed; XML fallback succeeded. 대용량 JSON2_S 다운로드 실패 후 XML로 재시도해 성공했습니다. reason=${reason}`;
 }
 
 async function handleDownloadZip(): Promise<void> {
@@ -892,8 +937,12 @@ function renderParseResult(parseResult?: BlastParseResult): string {
       ${statusLine("First HSP source", firstRecord.sequenceSource)}
     `
     : statusLine("First HSP", "저장 가능한 HSP sequence 없음");
+  const partialXmlNotice = parseResult.diagnostics?.partialXmlTail
+    ? `<div class="warning">Partial XML tail detected. XML 끝부분이 불완전하여, 수신된 결과 중 완성된 Hit block만 회수했습니다.</div>`
+    : "";
 
   return `
+    ${partialXmlNotice}
     <div class="status-box">
       ${statusLine("Format", parseResult.format)}
       ${statusLine("Parsed records", parseResult.records.length.toLocaleString())}

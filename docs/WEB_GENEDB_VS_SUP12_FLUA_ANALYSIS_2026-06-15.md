@@ -1,5 +1,24 @@
 # Web GeneDB vs SUP12 FluA 재실행 분석 보고서
 
+## 2026-06-15 Phase 8 보강 상태
+
+Phase 8에서는 같은 조건 비교와 안전한 결과 비교를 위해 다음 항목을 구현했다.
+
+- Web UI에 `SUP12 compatibility` preset 추가
+- preset 값: `maxHits=50000`, length filter `80%~500%`, keyword exclude `synthetic`, `construct`, `predicted`, `unverified`, ambiguous `N` 분리
+- JSON2_S 대용량 다운로드 실패 시 `XML fallback succeeded`로 성공 경로를 명확히 표시
+- `partialXmlTail=true`일 때 "완성된 Hit block만 회수됨"을 UI/log/meta에 표시
+- 로컬 비교 CLI `npm run compare:results` 추가
+- 비교 CLI는 ZIP/폴더/FASTA를 입력받아 aligned/ambiguous record count, unique sequence hash count, common/Web-only/SUP12-only count만 출력
+
+실제 로컬 검증 명령:
+
+```powershell
+npm run compare:results -- --web "result competition\FluA_M_Collection.zip" --sup12 "result competition\(SUP12) InfluenzaA_M_DB"
+```
+
+검증 결과는 본 문서의 count와 일치했다. 이 명령은 raw sequence, FASTA header, raw BLAST result, 개별 hash를 출력하지 않는다.
+
 작성일: 2026-06-15  
 대상 결과: `result competition/FluA_M_Collection.zip`  
 비교 대상: `result competition/(SUP12) InfluenzaA_M_DB`  

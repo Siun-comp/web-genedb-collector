@@ -214,6 +214,63 @@ textarea {
   margin-top: 16px;
 }
 
+.preset-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid #d7e6ed;
+  border-radius: 8px;
+  background: #f7fbfd;
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+.preset-card strong,
+.preset-card span {
+  display: block;
+}
+
+.preset-card strong {
+  font-size: 14px;
+}
+
+.preset-card span {
+  margin-top: 3px;
+  color: #5f7082;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.preset-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.preset-state {
+  border: 1px solid #cbd5df;
+  border-radius: 999px;
+  color: #4b5f73;
+  padding: 6px 9px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.preset-state.active {
+  border-color: #4f9a69;
+  color: #23653a;
+  background: #ecf8ef;
+}
+
+.preset-state.default {
+  border-color: #9bb8cf;
+  color: #315d7f;
+  background: #eef7fd;
+}
+
 .primary-button {
   border: 0;
   border-radius: 6px;
@@ -236,6 +293,17 @@ textarea {
   color: #243746;
   padding: 10px 14px;
   cursor: pointer;
+}
+
+.secondary-button.compact {
+  padding: 7px 10px;
+  font-size: 13px;
+}
+
+.secondary-button:disabled {
+  color: #7a8b9a;
+  background: #eef2f5;
+  cursor: not-allowed;
 }
 
 .advanced {
@@ -387,7 +455,9 @@ textarea {
   }
 
   .topbar,
-  .section-heading {
+  .section-heading,
+  .preset-card,
+  .preset-actions {
     align-items: flex-start;
     flex-direction: column;
   }

@@ -240,7 +240,9 @@ function buildMetaJson(
     resultSummary: {
       format: context.resultFormat ?? parseResult.format,
       downloadedAt: context.resultDownloadedAt ? new Date(context.resultDownloadedAt).toISOString() : null,
-      responseLength: context.resultRawLength ?? null
+      responseLength: context.resultRawLength ?? null,
+      completeHitBlocksSeen: parseResult.diagnostics?.completeHitBlocksSeen ?? null,
+      partialXmlTail: parseResult.diagnostics?.partialXmlTail ?? false
     },
     filters: {
       lengthFilterEnabled: state.lengthFilterEnabled,
@@ -278,6 +280,9 @@ function buildProcessLog(
     `Counts saved=${summary.savedCount}, ambiguous=${summary.ambiguousCount}, dropped=${summary.droppedCount}, unique=${summary.uniqueCount}, lengthDropped=${summary.lengthDroppedCount}, keywordDropped=${summary.keywordDroppedCount}`,
     `Filters length=${state.lengthFilterEnabled ? `${state.minLengthPercent}-${state.maxLengthPercent}%` : "off"}, keyword=${state.keywordFilterEnabled ? parseKeywords(state.keywords).join("|") || "none" : "off"}, ambiguousN=${state.excludeAmbiguousN ? "exclude" : "include"}`,
     `Parser diagnostics completeHitBlocksSeen=${parseResult.diagnostics?.completeHitBlocksSeen ?? "unknown"}, partialXmlTail=${parseResult.diagnostics?.partialXmlTail ?? false}`,
+    ...(parseResult.diagnostics?.partialXmlTail
+      ? ["Partial XML tail detected. XML 끝부분이 불완전하여 수신된 결과 중 완성된 Hit block만 회수했습니다."]
+      : []),
     ...(parseResult.diagnostics?.parserWarnings.map((line) => `Parser warning: ${line}`) ?? []),
     ...parseResult.logs.map((line) => `Parser: ${redactSequence(line, state.referenceSequence)}`),
     ...context.processLogs.map((line) => `Process: ${redactSequence(line, state.referenceSequence)}`)

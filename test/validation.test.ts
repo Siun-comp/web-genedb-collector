@@ -62,6 +62,8 @@ describe("collection form validation", () => {
   it("warns above 20000 max hits and blocks above 100000", () => {
     expect(validateCollectionForm({ ...validState, maxHits: 20000 }).warnings.some((message) => message.field === "maxHits")).toBe(false);
     expect(validateCollectionForm({ ...validState, maxHits: 20001 }).warnings.some((message) => message.field === "maxHits")).toBe(true);
+    expect(validateCollectionForm({ ...validState, maxHits: 50000 }).canSubmit).toBe(true);
+    expect(validateCollectionForm({ ...validState, maxHits: 50000 }).warnings.some((message) => message.field === "maxHits")).toBe(true);
     expect(validateCollectionForm({ ...validState, maxHits: 90000 }).warnings.some((message) => message.field === "maxHits")).toBe(true);
     expect(validateCollectionForm({ ...validState, maxHits: 100000 }).canSubmit).toBe(true);
     expect(validateCollectionForm({ ...validState, maxHits: 100001 }).canSubmit).toBe(false);

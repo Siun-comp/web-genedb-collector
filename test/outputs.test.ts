@@ -66,6 +66,21 @@ describe("output helpers", () => {
     expect(meta.parserDropped).toEqual([{ accession: "DROP001", title: "No sequence", reason: "No usable first HSP sequence" }]);
   });
 
+  it("keeps partial XML diagnostics in meta.json and process.log", () => {
+    const bundle = buildGeneDbOutputBundle(baseState(), parseResult(), outputContext());
+    const meta = JSON.parse(bundle.metaJson);
+
+    expect(meta.resultSummary).toMatchObject({
+      completeHitBlocksSeen: 6,
+      partialXmlTail: true
+    });
+    expect(meta.parserDiagnostics).toMatchObject({
+      completeHitBlocksSeen: 6,
+      partialXmlTail: true
+    });
+    expect(bundle.processLog).toContain("Partial XML tail detected. XML 끝부분이 불완전하여 수신된 결과 중 완성된 Hit block만 회수했습니다.");
+  });
+
   it("applies length before keyword before ambiguous N separation", () => {
     const bundle = buildGeneDbOutputBundle(baseState(), parseResult(), outputContext());
     const meta = JSON.parse(bundle.metaJson);
@@ -150,6 +165,11 @@ function parseResult(): BlastParseResult {
       keywordDroppedCount: 0,
       minLength: 8,
       maxLength: 51
+    },
+    diagnostics: {
+      completeHitBlocksSeen: 6,
+      partialXmlTail: true,
+      parserWarnings: ["synthetic partial XML warning"]
     }
   };
 }

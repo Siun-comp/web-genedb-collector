@@ -13,9 +13,9 @@ input target/reference DNA sequence
 
 ## Current Phase
 
-Phase 7 large-result stabilization is in progress.
+Phase 8 SUP12 comparison support is in progress.
 
-Implemented through Phase 7:
+Implemented through Phase 8:
 
 - Vite + TypeScript static app
 - input cleaning and validation
@@ -29,6 +29,8 @@ Implemented through Phase 7:
 - IndexedDB recovery for RID/status/options/count summary
 - large XML fallback parsing by complete `<Hit>...</Hit>` blocks
 - parser diagnostics for `completeHitBlocksSeen` and `partialXmlTail`
+- SUP12 compatibility preset for same-condition reruns
+- local result-set comparison CLI for ZIP/directory/FASTA summaries
 
 IndexedDB is only a recovery aid. It does not store raw query sequence or raw BLAST result.
 
@@ -43,6 +45,21 @@ IndexedDB is only a recovery aid. It does not store raw query sequence or raw BL
 - length filter: `90%` to `500%`
 - keyword exclude: `synthetic`, `construct`, `predicted`, `unverified`
 - ambiguous `N`: split to excluded FASTA by default
+
+## SUP12 Compatibility Preset
+
+Use the `Apply SUP12 preset` button when comparing Web GeneDB against legacy SUP12 output.
+
+The preset changes only collection options. It does not change task name, sequence, taxid, tool, or email.
+
+- database: `core_nt`
+- BLAST task: `megablast`
+- max hits: `50000`
+- expect: `0.05`
+- word size: `11`
+- length filter: `80%` to `500%`
+- keyword exclude: `synthetic`, `construct`, `predicted`, `unverified`
+- ambiguous `N`: split to excluded FASTA
 
 ## Safety Rules
 
@@ -65,8 +82,11 @@ npm run dev
 npm run typecheck
 npm test
 npm run build
+npm run compare:results -- --web "result competition\FluA_M_Collection.zip" --sup12 "result competition\(SUP12) InfluenzaA_M_DB"
 npm audit --audit-level=high
 ```
+
+The comparison CLI prints only counts and sequence-hash set overlap summaries. It does not print raw sequences, FASTA headers, raw BLAST results, or individual hashes.
 
 ## GitHub Pages Deployment
 
