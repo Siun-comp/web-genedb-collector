@@ -1,5 +1,28 @@
 # Large Result Stability Follow-up Plan
 
+## 2026-06-16 Phase 9F prototype completion
+
+Phase 9F streaming/chunked XML retrieval prototype has been implemented.
+
+- JSON2_S remains the primary result download attempt.
+- When JSON2_S fails, XML fallback first attempts `fetch` `ReadableStream` parsing.
+- The streaming parser reads chunks, extracts complete `<Hit>...</Hit>` blocks, and reuses the same XML Hit block parser semantics as the text parser.
+- If streaming is unavailable or fails before any salvageable result, the app falls back to the existing XML text download + Phase 9E Web Worker parser path.
+- Streaming success creates a `BlastParseResult` without building a full raw XML result string in main application state.
+- UI, process.log, meta.json, and run_info.json record `resultAcquisitionMode` and `streamingAttempt` as count/status summaries only.
+- Synthetic stream tests cover irregular chunk boundaries, partial XML tail recovery, read-error salvage, JSON2_S success, XML streaming success, and stream-unavailable text fallback.
+
+Verification:
+
+- `npm run typecheck` passed
+- `npm test` passed, 12 files / 103 tests
+
+Remaining limitation:
+
+- Streaming reduces raw XML full-text pressure during result retrieval/parsing.
+- It does not yet remove memory pressure from parsed records, FASTA strings, records.jsonl, or ZIP generation.
+- Real large-run validation remains a separate Phase 9G task and must not commit raw BLAST results or real analysis sequence.
+
 작성일: 2026-06-15  
 대상: Web GeneDB Collector  
 목표: RNA 결과 수집, JSON2_S fallback 메시지, partial XML 회수 표시, 대용량 metadata 구조를 보강하여 100,000 hit에 가까운 작업을 더 안정적으로 처리한다.

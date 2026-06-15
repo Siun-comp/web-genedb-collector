@@ -3,6 +3,7 @@ import { normalizeParsedHspSequence, type BlastParseDiagnostics, type BlastParse
 import { buildEntrezQuery, cleanSequence, hashSequence, wrapSequence } from "./fasta";
 import { parseKeywords } from "./filters";
 import type { BlastResultFallback } from "../services/blastClient";
+import type { BlastResultAcquisitionMode, BlastStreamingAttempt } from "../services/blastResultAcquisition";
 import type { CollectionFormState, ParserSummary } from "./types";
 
 export interface OutputContext {
@@ -13,6 +14,8 @@ export interface OutputContext {
   queryLength?: number;
   queryHash?: string;
   resultFallback?: BlastResultFallback;
+  resultAcquisitionMode?: BlastResultAcquisitionMode;
+  streamingAttempt?: BlastStreamingAttempt;
   fullProvenanceOmissionReason?: "user_disabled" | "zip_degradation_after_primary_failure";
   processLogs: string[];
 }
@@ -95,6 +98,8 @@ export function buildRunInfo(
     format?: string;
     responseLength?: number;
     fallback?: BlastResultFallback;
+    acquisitionMode?: BlastResultAcquisitionMode;
+    streamingAttempt?: BlastStreamingAttempt;
     completeness?: ResultCompletenessSummary;
     fullProvenanceOmissionReason?: OutputContext["fullProvenanceOmissionReason"];
   }
@@ -126,6 +131,8 @@ export function buildRunInfo(
           format: resultDetails.format ?? null,
           responseLength: resultDetails.responseLength ?? null,
           fallback: resultDetails.fallback ?? null,
+          acquisitionMode: resultDetails.acquisitionMode ?? null,
+          streamingAttempt: resultDetails.streamingAttempt ?? null,
           completeness: resultDetails.completeness ?? null
         }
       : null
@@ -195,6 +202,8 @@ export function buildGeneDbOutputBundle(state: CollectionFormState, parseResult:
     format: context.resultFormat ?? parseResult.format,
     responseLength: context.resultRawLength,
     fallback: context.resultFallback,
+    acquisitionMode: context.resultAcquisitionMode,
+    streamingAttempt: context.streamingAttempt,
     completeness,
     fullProvenanceOmissionReason: context.fullProvenanceOmissionReason
   });
@@ -301,6 +310,8 @@ function buildMetaJson(
       format: context.resultFormat ?? parseResult.format,
       downloadedAt: context.resultDownloadedAt ? new Date(context.resultDownloadedAt).toISOString() : null,
       responseLength: context.resultRawLength ?? null,
+      acquisitionMode: context.resultAcquisitionMode ?? null,
+      streamingAttempt: context.streamingAttempt ?? null,
       completeHitBlocksSeen: parseResult.diagnostics?.completeHitBlocksSeen ?? null,
       partialXmlTail: parseResult.diagnostics?.partialXmlTail ?? false,
       qseqFallbackCount: parseResult.diagnostics?.qseqFallbackCount ?? 0,
@@ -360,6 +371,12 @@ function buildProcessLog(
     `Taxid=${state.taxid.trim()}`,
     `Result format=${context.resultFormat ?? parseResult.format}`,
     `Result response length=${context.resultRawLength ?? "unknown"}`,
+    `Result acquisition mode=${context.resultAcquisitionMode ?? "unknown"}`,
+    ...(context.streamingAttempt
+      ? [
+          `XML streaming attempted=${context.streamingAttempt.attempted}, status=${context.streamingAttempt.status}, rawLength=${context.streamingAttempt.rawLength ?? "unknown"}, completeHitBlocks=${context.streamingAttempt.completeHitBlocksSeen ?? "unknown"}, partialXmlTail=${context.streamingAttempt.partialXmlTail ?? "unknown"}`
+        ]
+      : []),
     `Metadata mode=summary_only, fullProvenance=${state.includeFullProvenance === false ? "omitted" : "records_jsonl"}, omissionReason=${state.includeFullProvenance === false ? (context.fullProvenanceOmissionReason ?? "user_disabled") : "none"}, sequencesInProvenance=false`,
     ...(context.resultFallback ? [`Result fallback status=${context.resultFallback.status}, primary=${context.resultFallback.primaryFormat}, fallback=${context.resultFallback.fallbackFormat}`] : []),
     ...(context.resultFallback?.primaryFailure

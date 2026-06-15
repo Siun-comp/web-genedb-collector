@@ -18,7 +18,6 @@ import { validateCollectionForm } from "./domain/validation";
 import {
   BlastClientError,
   buildSafeBlastRequestPreview,
-  downloadBlastResultWithFallback,
   formatFailureForLog,
   getBlastSearchInfo,
   nextPollDelayMs,
@@ -26,6 +25,12 @@ import {
   type BlastResultFallback,
   type BlastSearchStatus
 } from "./services/blastClient";
+import {
+  acquireBlastResultWithStreamingXmlFallback,
+  type BlastResultAcquisitionMode,
+  type BlastStreamingAttempt
+} from "./services/blastResultAcquisition";
+import type { BlastXmlStreamProgress } from "./domain/blastXmlStreamParser";
 import {
   buildJobSnapshot,
   clearJobSnapshot,
@@ -86,16 +91,34 @@ interface RuntimeJob {
   detail: string;
   action: string;
   logs: string[];
-  parseProgress?: ParserWorkerProgress;
+  parserMode?: string;
+  parseProgress?: RuntimeParseProgress;
   parseResult?: BlastParseResult;
   outputBundle?: GeneDbOutputBundle;
   resultFormat?: string;
   resultDownloadedAt?: number;
   resultRawLength?: number;
   resultFallback?: BlastResultFallback;
+  resultAcquisitionMode?: BlastResultAcquisitionMode;
+  streamingAttempt?: BlastStreamingAttempt;
   restoredQuery?: StoredQuerySummary;
   restoredAt?: string;
   storageMessage?: string;
+}
+
+interface RuntimeParseProgress {
+  parserMode: string;
+  format: string;
+  stage: string;
+  processedHits: number;
+  totalHits?: number;
+  records: number;
+  dropped: number;
+  completeHitBlocksSeen: number;
+  partialXmlTail: boolean;
+  rawLength: number;
+  elapsedMs: number;
+  chunksRead?: number;
 }
 
 let state = { ...initialState };
@@ -304,6 +327,8 @@ function render(focusToRestore?: { id: string; start: number | null; end: number
               ${statusLine("Result downloaded", job.resultDownloadedAt ? formatTime(job.resultDownloadedAt) : "-")}
               ${statusLine("Result response length", job.resultRawLength === undefined ? "-" : `${job.resultRawLength.toLocaleString()} chars`)}
               ${statusLine("Result fallback", formatFallbackStatus(job.resultFallback))}
+              ${statusLine("Acquisition mode", job.resultAcquisitionMode ?? "-")}
+              ${statusLine("XML streaming", job.streamingAttempt?.status ?? "-")}
             </div>
           </section>
 
@@ -314,7 +339,7 @@ function render(focusToRestore?: { id: string; start: number | null; end: number
 
           <section class="panel">
             <h2>Parser skeleton</h2>
-            ${renderParseResult(job.parseResult, job.parseProgress)}
+            ${renderParseResult(job.parseResult, job.parseProgress, job.parserMode)}
           </section>
 
           <section class="panel">
@@ -639,49 +664,55 @@ async function downloadReadyResult(): Promise<void> {
   render();
 
   try {
-    const result = await downloadBlastResultWithFallback(rid, fetch, { hitlistSize: state.maxHits, ncbiGi: true });
-    const resultDownloadedAt = Date.parse(result.downloadedAt);
-    const logsBeforeOutput = result.fallback?.status === "fallback_succeeded" ? appendLog(job.logs, formatJson2FallbackSuccess(result.fallback, result.json2FailureReason)) : job.logs;
-    const downloadLogs = appendLog(logsBeforeOutput, `Result downloaded. rid=${rid}, format=${result.format}, responseLength=${result.rawLength}, parser=worker`);
-
-    job = {
-      ...job,
-      status: "parsing",
-      isBusy: true,
-      resultFormat: result.format,
-      resultDownloadedAt,
-      resultRawLength: result.rawLength,
-      resultFallback: result.fallback,
-      parseProgress: undefined,
-      title: "BLAST result parsing",
-      detail: `Worker parsing started. format=${result.format}, responseLength=${result.rawLength.toLocaleString()} chars.`,
-      action: "Progress shows counts only. Raw BLAST result and full query sequence are not displayed or stored.",
-      logs: downloadLogs
-    };
-    render();
-
-    const parseResult = await parseBlastResultInWorker(result.text, result.format, {
-      progressIntervalHits: 1000,
-      onProgress: (progress) => {
+    const acquisition = await acquireBlastResultWithStreamingXmlFallback(rid, fetch, {
+      hitlistSize: state.maxHits,
+      ncbiGi: true,
+      tryXmlStreaming: true,
+      onStreamingProgress: (progress) => {
+        const runtimeProgress = fromStreamingProgress(progress);
         job = {
           ...job,
-          parseProgress: progress,
-          detail: formatParserProgress(progress),
-          action: "Worker parsing is running in the background. Counts may update in batches."
+          status: "parsing",
+          isBusy: true,
+          parserMode: "XML streaming",
+          resultFormat: "XML",
+          resultRawLength: progress.rawLength,
+          parseProgress: runtimeProgress,
+          title: "BLAST XML streaming",
+          detail: formatParserProgress(runtimeProgress),
+          action: "Streaming parser is reading XML chunks. Progress shows counts only."
         };
         render();
       }
     });
-    const parseLogs = appendLog(
-      job.logs,
-      `Parser worker completed. format=${result.format}, records=${parseResult.records.length}, dropped=${parseResult.dropped.length}, completeHitBlocks=${parseResult.diagnostics?.completeHitBlocksSeen ?? "unknown"}, partialXmlTail=${Boolean(parseResult.diagnostics?.partialXmlTail)}, elapsedMs=${job.parseProgress?.elapsedMs ?? "unknown"}`
+    const parseResult = acquisition.kind === "stream" ? acquisition.parseResult : await parseTextAcquisitionInWorker(acquisition.result, acquisition.mode, acquisition.streamingAttempt);
+    const resultFormat = acquisition.kind === "stream" ? acquisition.format : acquisition.result.format;
+    const resultDownloadedAt = Date.parse(acquisition.kind === "stream" ? acquisition.downloadedAt : acquisition.result.downloadedAt);
+    const resultRawLength = acquisition.kind === "stream" ? acquisition.rawLength : acquisition.result.rawLength;
+    const resultFallback = acquisition.kind === "stream" ? acquisition.fallback : acquisition.result.fallback;
+    const resultAcquisitionMode = acquisition.mode;
+    const streamingAttempt = acquisition.streamingAttempt;
+    let parseLogs = job.logs;
+    if (resultFallback?.status === "fallback_succeeded") {
+      parseLogs = appendLog(parseLogs, formatJson2FallbackSuccess(resultFallback, acquisition.kind === "text" ? acquisition.result.json2FailureReason : undefined));
+    }
+    if (streamingAttempt?.attempted) {
+      parseLogs = appendLog(parseLogs, formatStreamingAttempt(streamingAttempt, resultAcquisitionMode));
+    }
+    parseLogs = appendLog(
+      parseLogs,
+      acquisition.kind === "stream"
+        ? `XML streaming parser completed. rid=${rid}, responseLength=${resultRawLength}, records=${parseResult.records.length}, dropped=${parseResult.dropped.length}, completeHitBlocks=${parseResult.diagnostics?.completeHitBlocksSeen ?? "unknown"}, partialXmlTail=${Boolean(parseResult.diagnostics?.partialXmlTail)}, elapsedMs=${job.parseProgress?.elapsedMs ?? "unknown"}`
+        : `Parser worker completed. format=${resultFormat}, records=${parseResult.records.length}, dropped=${parseResult.dropped.length}, completeHitBlocks=${parseResult.diagnostics?.completeHitBlocksSeen ?? "unknown"}, partialXmlTail=${Boolean(parseResult.diagnostics?.partialXmlTail)}, elapsedMs=${job.parseProgress?.elapsedMs ?? "unknown"}`
     );
     const outputBundle = buildGeneDbOutputBundle(state, parseResult, {
       rid,
-      resultFormat: result.format,
+      resultFormat,
       resultDownloadedAt,
-      resultRawLength: result.rawLength,
-      resultFallback: result.fallback,
+      resultRawLength,
+      resultFallback,
+      resultAcquisitionMode,
+      streamingAttempt,
       processLogs: parseLogs
     });
     const zipEstimate = estimateGeneDbZipSize(outputBundle);
@@ -689,6 +720,8 @@ async function downloadReadyResult(): Promise<void> {
       parseLogs,
       `ZIP estimate. uncompressedBytes=${zipEstimate.totalUncompressedBytes}, recordsJsonlBytes=${zipEstimate.recordsJsonlBytes}, risk=${zipEstimate.riskLevel}, omitProvenanceRecommended=${zipEstimate.omitProvenanceRecommended}`
     );
+    const result = { format: resultFormat, rawLength: resultRawLength };
+    const logsWithAcquisition = appendLog(logsWithEstimate, `Result acquisition mode=${resultAcquisitionMode}, streamingStatus=${streamingAttempt?.status ?? "not_attempted"}`);
     const completeHitBlocks = parseResult.diagnostics?.completeHitBlocksSeen;
     const partialXmlTail = Boolean(parseResult.diagnostics?.partialXmlTail);
     job = {
@@ -697,16 +730,19 @@ async function downloadReadyResult(): Promise<void> {
       isBusy: false,
       parseResult,
       outputBundle,
-      resultFormat: result.format,
+      parserMode: acquisition.kind === "stream" ? "XML streaming" : "Web Worker",
+      resultFormat,
       resultDownloadedAt,
-      resultRawLength: result.rawLength,
-      resultFallback: result.fallback,
+      resultRawLength,
+      resultFallback,
+      resultAcquisitionMode,
+      streamingAttempt,
       parseProgress: job.parseProgress,
       title: "FASTA / ZIP 준비 완료",
       detail: `Aligned=${outputBundle.summary.savedCount}, N 분리=${outputBundle.summary.ambiguousCount}, 제외=${outputBundle.summary.droppedCount}.`,
       action: "결과를 확인한 뒤 ZIP 다운로드를 누르세요.",
       logs: appendLog(
-        logsWithEstimate,
+        logsWithAcquisition,
         `Result downloaded and output prepared. rid=${rid}, format=${result.format}, responseLength=${result.rawLength}, aligned=${outputBundle.summary.savedCount}, ambiguous=${outputBundle.summary.ambiguousCount}, dropped=${outputBundle.summary.droppedCount}, completeHitBlocks=${completeHitBlocks ?? "unknown"}, partialXmlTail=${partialXmlTail}${partialXmlTail ? ", completeness=완성 Hit block만 회수됨" : ""}`
       )
     };
@@ -721,6 +757,85 @@ async function downloadReadyResult(): Promise<void> {
 function formatJson2FallbackSuccess(fallback: BlastResultFallback, legacyReason?: string): string {
   const primary = fallback.primaryFailure ? ` primary=${fallback.primaryFailure.reason}/${fallback.primaryFailure.code}` : "";
   return `JSON2_S large download failed; XML fallback succeeded. 대용량 JSON2_S 다운로드 실패 후 XML로 재시도해 성공했습니다.${primary}${legacyReason ? ` legacyReason=${legacyReason}` : ""}`;
+}
+
+async function parseTextAcquisitionInWorker(
+  result: { rid: string; format: "JSON2_S" | "XML"; downloadedAt: string; rawLength: number; text: string; fallback?: BlastResultFallback },
+  acquisitionMode: BlastResultAcquisitionMode,
+  streamingAttempt?: BlastStreamingAttempt
+): Promise<BlastParseResult> {
+  const resultDownloadedAt = Date.parse(result.downloadedAt);
+  const downloadLogs = appendLog(job.logs, `Result downloaded. rid=${result.rid}, format=${result.format}, acquisitionMode=${acquisitionMode}, responseLength=${result.rawLength}, parser=worker`);
+
+  job = {
+    ...job,
+    status: "parsing",
+    isBusy: true,
+    parserMode: "Web Worker",
+    resultFormat: result.format,
+    resultDownloadedAt,
+    resultRawLength: result.rawLength,
+    resultFallback: result.fallback,
+    resultAcquisitionMode: acquisitionMode,
+    streamingAttempt,
+    parseProgress: undefined,
+    title: "BLAST result parsing",
+    detail: `Worker parsing started. format=${result.format}, responseLength=${result.rawLength.toLocaleString()} chars.`,
+    action: "Progress shows counts only. Raw BLAST result and full query sequence are not displayed or stored.",
+    logs: downloadLogs
+  };
+  render();
+
+  return parseBlastResultInWorker(result.text, result.format, {
+    progressIntervalHits: 1000,
+    onProgress: (progress) => {
+      const runtimeProgress = fromWorkerProgress(progress);
+      job = {
+        ...job,
+        parseProgress: runtimeProgress,
+        detail: formatParserProgress(runtimeProgress),
+        action: "Worker parsing is running in the background. Counts may update in batches."
+      };
+      render();
+    }
+  });
+}
+
+function fromWorkerProgress(progress: ParserWorkerProgress): RuntimeParseProgress {
+  return {
+    parserMode: "Web Worker",
+    format: progress.format,
+    stage: progress.stage,
+    processedHits: progress.processedHits,
+    totalHits: progress.totalHits,
+    records: progress.records,
+    dropped: progress.dropped,
+    completeHitBlocksSeen: progress.completeHitBlocksSeen,
+    partialXmlTail: progress.partialXmlTail,
+    rawLength: progress.rawLength,
+    elapsedMs: progress.elapsedMs
+  };
+}
+
+function fromStreamingProgress(progress: BlastXmlStreamProgress): RuntimeParseProgress {
+  return {
+    parserMode: "XML streaming",
+    format: "XML",
+    stage: progress.stage,
+    processedHits: progress.processedHits,
+    records: progress.records,
+    dropped: progress.dropped,
+    completeHitBlocksSeen: progress.completeHitBlocksSeen,
+    partialXmlTail: progress.partialXmlTail,
+    rawLength: progress.rawLength,
+    elapsedMs: progress.elapsedMs,
+    chunksRead: progress.chunksRead
+  };
+}
+
+function formatStreamingAttempt(attempt: BlastStreamingAttempt, mode: BlastResultAcquisitionMode): string {
+  const failure = attempt.failure ? `, failure=${attempt.failure.reason}/${attempt.failure.code}` : "";
+  return `XML streaming attempt. mode=${mode}, status=${attempt.status}, rawLength=${attempt.rawLength ?? "unknown"}, completeHitBlocks=${attempt.completeHitBlocksSeen ?? "unknown"}, partialXmlTail=${attempt.partialXmlTail ?? "unknown"}${failure}`;
 }
 
 async function handleDownloadZip(): Promise<void> {
@@ -838,6 +953,8 @@ function outputContext(): OutputContext {
     resultDownloadedAt: job.resultDownloadedAt,
     resultRawLength: job.resultRawLength,
     resultFallback: job.resultFallback,
+    resultAcquisitionMode: job.resultAcquisitionMode,
+    streamingAttempt: job.streamingAttempt,
     fullProvenanceOmissionReason: state.includeFullProvenance === false ? "user_disabled" : undefined,
     queryLength: job.restoredQuery?.length,
     queryHash: job.restoredQuery?.hash,
@@ -1062,13 +1179,14 @@ function renderLog(logs: string[]): string {
     return `<ol class="process-log">${logs.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ol>`;
 }
 
-function renderParseResult(parseResult?: BlastParseResult, progress?: ParserWorkerProgress): string {
+function renderParseResult(parseResult?: BlastParseResult, progress?: RuntimeParseProgress, parserMode?: string): string {
   if (!parseResult) {
     if (progress) {
       return `
         <div class="status-box">
-          ${statusLine("Parser mode", "Web Worker")}
+          ${statusLine("Parser mode", progress.parserMode)}
           ${statusLine("Stage", progress.stage)}
+          ${progress.chunksRead === undefined ? "" : statusLine("Stream chunks", progress.chunksRead.toLocaleString())}
           ${statusLine("Processed hits", progress.processedHits.toLocaleString())}
           ${statusLine("Parsed records", progress.records.toLocaleString())}
           ${statusLine("Dropped hits", progress.dropped.toLocaleString())}
@@ -1098,7 +1216,7 @@ function renderParseResult(parseResult?: BlastParseResult, progress?: ParserWork
   return `
     ${partialXmlNotice}
     <div class="status-box">
-      ${statusLine("Parser mode", "Web Worker")}
+      ${statusLine("Parser mode", parserMode ?? "Web Worker")}
       ${statusLine("Format", parseResult.format)}
       ${statusLine("Parsed records", parseResult.records.length.toLocaleString())}
       ${statusLine("Dropped hits", parseResult.dropped.length.toLocaleString())}
@@ -1222,9 +1340,10 @@ function formatFallbackStatus(fallback?: BlastResultFallback): string {
   return "JSON2_S failed, XML fallback failed";
 }
 
-function formatParserProgress(progress: ParserWorkerProgress): string {
+function formatParserProgress(progress: RuntimeParseProgress): string {
   const total = progress.totalHits === undefined ? "" : `/${progress.totalHits.toLocaleString()}`;
-  return `Worker parsing ${progress.format}. stage=${progress.stage}, processed=${progress.processedHits.toLocaleString()}${total}, records=${progress.records.toLocaleString()}, dropped=${progress.dropped.toLocaleString()}, completeHitBlocks=${progress.completeHitBlocksSeen.toLocaleString()}, elapsed=${formatElapsed(progress.elapsedMs)}.`;
+  const chunks = progress.chunksRead === undefined ? "" : `, chunks=${progress.chunksRead.toLocaleString()}`;
+  return `${progress.parserMode} parsing ${progress.format}. stage=${progress.stage}, processed=${progress.processedHits.toLocaleString()}${total}, records=${progress.records.toLocaleString()}, dropped=${progress.dropped.toLocaleString()}, completeHitBlocks=${progress.completeHitBlocksSeen.toLocaleString()}${chunks}, elapsed=${formatElapsed(progress.elapsedMs)}.`;
 }
 
 function formatElapsed(ms: number): string {

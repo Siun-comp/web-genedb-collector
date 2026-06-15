@@ -55,6 +55,11 @@ export interface BlastParseOptions {
   onProgress?: (progress: BlastParseProgress) => void;
 }
 
+export interface XmlHitBlockParseResult {
+  record?: ParsedHsp;
+  dropped?: DroppedHit;
+}
+
 export type ResultSequenceOutputMode = "u_to_t";
 
 export interface ParsedHspSequenceNormalization {
@@ -157,14 +162,11 @@ function parseXmlSkeleton(text: string, format: BlastResultFormat, options: Blas
   while ((match = hitPattern.exec(text)) !== null) {
     const hitBlock = match[0];
     completeHitBlocksSeen += 1;
-    const accession = readXmlTag(hitBlock, "Hit_accession") || readXmlTag(hitBlock, "Hit_id") || "unknown_accession";
-    const title = readXmlTag(hitBlock, "Hit_def") || readXmlTag(hitBlock, "Hit_title") || accession;
-    const hspBlock = hitBlock.match(/<Hsp\b[\s\S]*?<\/Hsp>/)?.[0];
-    const parsedHsp = hspBlock ? parseXmlHsp(hspBlock, accession, title) : null;
-    if (parsedHsp) {
-      records.push(parsedHsp);
+    const parsedHit = parseXmlHitBlock(hitBlock);
+    if (parsedHit.record) {
+      records.push(parsedHit.record);
     } else {
-      dropped.push({ accession, title, reason: "No usable first HSP sequence" });
+      dropped.push(parsedHit.dropped ?? { reason: "No usable first HSP sequence" });
     }
     maybeEmitProgress(options, {
       stage: "parsing_hits",
@@ -188,8 +190,27 @@ function parseXmlSkeleton(text: string, format: BlastResultFormat, options: Blas
     });
   }
 
+  return buildXmlBlastParseResult(records, dropped, completeHitBlocksSeen, partialXmlTail, parserWarnings);
+}
+
+export function parseXmlHitBlock(hitBlock: string): XmlHitBlockParseResult {
+  const accession = readXmlTag(hitBlock, "Hit_accession") || readXmlTag(hitBlock, "Hit_id") || "unknown_accession";
+  const title = readXmlTag(hitBlock, "Hit_def") || readXmlTag(hitBlock, "Hit_title") || accession;
+  const hspBlock = hitBlock.match(/<Hsp\b[\s\S]*?<\/Hsp>/)?.[0];
+  const parsedHsp = hspBlock ? parseXmlHsp(hspBlock, accession, title) : null;
+  if (parsedHsp) return { record: parsedHsp };
+  return { dropped: { accession, title, reason: "No usable first HSP sequence" } };
+}
+
+export function buildXmlBlastParseResult(
+  records: ParsedHsp[],
+  dropped: DroppedHit[],
+  completeHitBlocksSeen: number,
+  partialXmlTail: boolean,
+  parserWarnings: string[] = []
+): BlastParseResult {
   return buildResult(
-    format,
+    "XML",
     records,
     dropped,
     [`Parsed XML blocks: completeHits=${completeHitBlocksSeen}, records=${records.length}, partialXmlTail=${partialXmlTail}`, ...parserWarnings],

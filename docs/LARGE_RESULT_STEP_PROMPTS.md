@@ -1,5 +1,35 @@
 # Large Result Stability Step Prompts
 
+## Phase 9F Prompt: Streaming Retrieval Prototype
+
+상태: 완료. 구현 기준은 JSON2_S primary 유지, XML ReadableStream fallback, streaming 불가/실패 시 text XML + Web Worker fallback이다.
+
+추가된 검증:
+
+- synthetic stream tests
+- partial chunk boundary tests
+- stream read-error salvage test
+- JSON2_S success path test
+- XML streaming success path test
+- stream-unavailable text fallback test
+
+## Phase 9G Prompt: Real Large-run Validation
+
+```text
+web-genedb-collector/docs/LARGE_RESULT_STABILITY_PLAN.md를 기준으로 Phase 9G validation을 수행하라.
+
+Phase 9A~9F의 RNA U->T normalization, qseq fallback warning/count, N-only ambiguous split,
+structured JSON2_S/XML fallback, partialXmlTail completeness reporting, summary meta/records.jsonl split,
+ZIP size estimate/degradation, Web Worker parser, XML streaming prototype과 text Worker fallback을 유지하라.
+
+목표는 GitHub Pages URL에서 실제 사용 가능한 공개/짧은 test sequence 또는 사용자가 제공한 조건으로
+RID 발급, 60초 이상 polling, acquisition mode, streamingAttempt status, partialXmlTail, completeHitBlocksSeen,
+aligned/ambiguous/dropped count, ZIP 다운로드를 검증하는 것이다.
+
+원본 query sequence, raw BLAST result, 실제 분석 sequence, API key, 개인정보, 회사 내부자료는 repository와 문서에 포함하지 말고
+RID/status/count/network summary만 보고하라.
+```
+
 이 문서는 `web-genedb-collector/docs/LARGE_RESULT_STABILITY_PLAN.md`를 구현하기 위한 단계별 프롬프트다. 각 단계는 이전 단계의 테스트 통과 후 진행한다.
 
 공통 금지:
