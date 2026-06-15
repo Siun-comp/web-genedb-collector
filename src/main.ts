@@ -144,7 +144,7 @@ function render(focusToRestore?: { id: string; start: number | null; end: number
           <h1>${APP_NAME}</h1>
           <p>입력한 DNA/RNA sequence를 지정 taxid 안에서 BLAST하여 aligned hit FASTA를 수집하기 위한 정적 웹앱입니다.</p>
         </div>
-        <div class="phase-badge">Phase 8 · SUP12 comparison</div>
+        <div class="phase-badge">© 2026 Jang Si Un · Developer</div>
       </header>
 
       <section class="notice-strip">
