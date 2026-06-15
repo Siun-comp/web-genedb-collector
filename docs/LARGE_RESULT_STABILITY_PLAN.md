@@ -4,6 +4,24 @@
 대상: Web GeneDB Collector  
 목표: RNA 결과 수집, JSON2_S fallback 메시지, partial XML 회수 표시, 대용량 metadata 구조를 보강하여 100,000 hit에 가까운 작업을 더 안정적으로 처리한다.
 
+## 2026-06-15 Phase 9C 완료 상태
+
+Phase 9C metadata split을 구현했다.
+
+- `Task_meta.json`은 summary-only로 축소했다.
+- record-level provenance는 기본 포함되는 `Task_records.jsonl`로 분리했다.
+- 사용자는 UI에서 `records.jsonl` 포함 여부를 끌 수 있다.
+- `records.jsonl`에는 accession/title/HSP/query range/identity/e-value/bit score/disposition/sequenceSource를 기록하되 sequence 본문은 저장하지 않는다.
+- `meta.json.outputManifest`, `run_info.json`, `process.log`, UI output preview에 provenance included/omitted 상태를 표시한다.
+- 기존 FASTA header 정책과 accession 단위 중복 보존은 유지했다.
+- Phase 9A/9B 동작은 유지했다.
+
+검증:
+
+- `npm run typecheck` 통과
+- `npm test` 통과, 9 files / 84 tests
+- `npm run build` 통과
+
 보안 원칙:
 
 - 실제 분석 sequence, raw BLAST JSON/XML, API key, 개인정보, 회사 내부자료를 repository에 포함하지 않는다.
@@ -233,7 +251,7 @@ FASTA sequence 자체는 JSONL에 넣지 않는다.
 - partial XML은 "완성 Hit block만 회수됨"으로 표시된다.
 - tests가 fallback code별 메시지와 meta/run_info/process.log completeness를 검증한다.
 
-### Phase 9C. Metadata split
+### Phase 9C. Metadata split 완료
 
 작업:
 

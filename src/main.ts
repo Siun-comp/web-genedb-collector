@@ -62,7 +62,8 @@ const initialState: CollectionFormState = {
   maxLengthPercent: FILTER_DEFAULTS.maxLengthPercent,
   keywordFilterEnabled: FILTER_DEFAULTS.keywordFilterEnabled,
   keywords: FILTER_DEFAULTS.keywords.join(", "),
-  excludeAmbiguousN: FILTER_DEFAULTS.excludeAmbiguousN
+  excludeAmbiguousN: FILTER_DEFAULTS.excludeAmbiguousN,
+  includeFullProvenance: true
 };
 
 interface RuntimeJob {
@@ -97,7 +98,7 @@ function render(focusToRestore?: { id: string; start: number | null; end: number
   const sequence = summarizeSequence(state.referenceSequence);
   const validation = validateCollectionForm(state);
   const validationStatus = buildCollectionStatus(validation);
-  const zipManifest = buildZipManifest(state.taskName);
+  const zipManifest = buildZipManifest(state.taskName, state.includeFullProvenance !== false);
   const requestPreview = buildSafeBlastRequestPreview(state);
   const outputPreview = buildOutputPreview();
   const sup12PresetActive = isSup12CompatibilityPresetActive(state);
@@ -250,6 +251,13 @@ function render(focusToRestore?: { id: string; start: number | null; end: number
                 <input id="excludeAmbiguousN" type="checkbox" ${state.excludeAmbiguousN ? "checked" : ""} />
                 N 포함 hit를 별도 제외 파일로 분리
               </label>
+              <div class="field full">
+                <label class="checkbox-row">
+                  <input id="includeFullProvenance" type="checkbox" ${state.includeFullProvenance !== false ? "checked" : ""} />
+                  Include full provenance records.jsonl
+                </label>
+                <div class="hint">records.jsonl에는 accession/range/score 등 추적 정보만 저장하고 sequence 본문은 넣지 않습니다. 대용량 ZIP 크기를 줄이고 싶으면 끌 수 있습니다.</div>
+              </div>
             </div>
           </div>
 
@@ -330,6 +338,7 @@ function render(focusToRestore?: { id: string; start: number | null; end: number
               ${statusLine("Length filter", outputPreview.lengthFilter)}
               ${statusLine("Keyword filter", outputPreview.keywordFilter)}
               ${statusLine("N filter", outputPreview.nFilter)}
+              ${statusLine("Provenance", outputPreview.provenance)}
             </div>
             <ul class="file-list">
               ${zipManifest.files.map((file) => `<li>${escapeHtml(file)}</li>`).join("")}
@@ -378,6 +387,7 @@ function bindEvents(): void {
   bindInput("maxLengthPercent", (value) => (state.maxLengthPercent = parseFloatNumber(value, FILTER_DEFAULTS.maxLengthPercent)));
   bindInput("keywords", (value) => (state.keywords = value));
   bindCheckbox("excludeAmbiguousN", (checked) => (state.excludeAmbiguousN = checked));
+  bindCheckbox("includeFullProvenance", (checked) => (state.includeFullProvenance = checked));
 
   document.querySelector("#submitBlast")?.addEventListener("click", () => {
     void handleSubmit();
@@ -675,7 +685,10 @@ async function handleDownloadZip(): Promise<void> {
     isBusy: true,
     outputBundle: bundle,
     title: "ZIP 생성 중",
-    detail: "Aligned FASTA, ambiguous FASTA, meta.json, run_info.json, process.log를 ZIP으로 묶고 있습니다.",
+    detail:
+      state.includeFullProvenance !== false
+        ? "Aligned FASTA, ambiguous FASTA, summary meta.json, records.jsonl, run_info.json, process.log를 ZIP으로 묶고 있습니다."
+        : "Aligned FASTA, ambiguous FASTA, summary meta.json, run_info.json, process.log를 ZIP으로 묶고 있습니다. records.jsonl은 사용자 설정으로 제외되었습니다.",
     action: "브라우저 다운로드가 시작될 때까지 기다리세요."
   };
   render();
@@ -940,12 +953,16 @@ function restoreFocus(focusToRestore?: { id: string; start: number | null; end: 
   }
 }
 
-function buildOutputPreview(): { header: string; lengthFilter: string; keywordFilter: string; nFilter: string } {
+function buildOutputPreview(): { header: string; lengthFilter: string; keywordFilter: string; nFilter: string; provenance: string } {
   return {
-    header: ">description_accession 중심, 상세 provenance는 meta.json",
+    header: ">description_accession 중심, 상세 provenance는 records.jsonl",
     lengthFilter: state.lengthFilterEnabled ? `${state.minLengthPercent}%~${state.maxLengthPercent}%` : "사용 안 함",
     keywordFilter: state.keywordFilterEnabled ? parseKeywords(state.keywords).join(", ") || "keyword 없음" : "사용 안 함",
-    nFilter: state.excludeAmbiguousN ? "N 포함 hit는 excluded_ambiguous FASTA로 분리" : "N 포함 hit도 aligned FASTA에 포함"
+    nFilter: state.excludeAmbiguousN ? "N 포함 hit는 excluded_ambiguous FASTA로 분리" : "N 포함 hit도 aligned FASTA에 포함",
+    provenance:
+      state.includeFullProvenance !== false
+        ? "records.jsonl included; sequence bodies omitted"
+        : "records.jsonl omitted; summary meta only"
   };
 }
 
@@ -1014,6 +1031,12 @@ function renderOutputBundle(bundle?: GeneDbOutputBundle): string {
     return `<div class="empty-state">BLAST result parser가 완료되면 FASTA/ZIP count가 표시됩니다.</div>`;
   }
 
+  const provenanceRows = bundle.recordsJsonl === null ? 0 : bundle.recordsJsonl.split(/\r?\n/).filter(Boolean).length;
+  const provenanceStatus =
+    bundle.recordsJsonl === null
+      ? "records.jsonl omitted; summary meta only"
+      : `${provenanceRows.toLocaleString()} records.jsonl rows; sequence bodies omitted`;
+
   return `
     <div class="status-box">
       ${statusLine("BLAST hit / usable HSP", `${bundle.records.length.toLocaleString()} usable HSP`)}
@@ -1025,6 +1048,7 @@ function renderOutputBundle(bundle?: GeneDbOutputBundle): string {
       ${statusLine("전체 제외", `${bundle.summary.droppedCount.toLocaleString()} records`)}
       ${statusLine("Unique sequence 참고값", `${bundle.summary.uniqueCount.toLocaleString()} (dedup output 아님)`)}
       ${statusLine("Aligned 길이 범위", `${bundle.summary.minLength.toLocaleString()}-${bundle.summary.maxLength.toLocaleString()} bp`)}
+      ${statusLine("Provenance", provenanceStatus)}
     </div>
   `;
 }

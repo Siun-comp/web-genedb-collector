@@ -49,6 +49,7 @@ export interface CollectionFormState {
   keywordFilterEnabled: boolean;
   keywords: string;
   excludeAmbiguousN: boolean;
+  includeFullProvenance?: boolean;
 }
 
 export type JobStatus =

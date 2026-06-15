@@ -67,6 +67,8 @@ partialXmlTail=true 결과를 "완성 Hit block만 회수됨"으로 UI/log/meta/
 
 ## Phase 9C Prompt: Summary Meta And Full Provenance Split
 
+상태: 완료. 구현 기준은 `*_meta.json` summary-only, 기본 포함 `*_records.jsonl`, sequence 본문 없는 JSONL provenance, 사용자 선택에 따른 records JSONL omitted mode다.
+
 ```text
 web-genedb-collector/docs/LARGE_RESULT_STABILITY_PLAN.md를 기준으로 Phase 9C를 구현하라.
 

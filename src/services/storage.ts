@@ -24,6 +24,7 @@ export interface StoredCollectionState {
   keywordFilterEnabled: boolean;
   keywords: string;
   excludeAmbiguousN: boolean;
+  includeFullProvenance?: boolean;
 }
 
 export interface StoredQuerySummary {
@@ -171,7 +172,8 @@ export function sanitizeCollectionState(state: CollectionFormState): StoredColle
     maxLengthPercent: state.maxLengthPercent,
     keywordFilterEnabled: state.keywordFilterEnabled,
     keywords: state.keywords,
-    excludeAmbiguousN: state.excludeAmbiguousN
+    excludeAmbiguousN: state.excludeAmbiguousN,
+    includeFullProvenance: state.includeFullProvenance !== false
   };
 }
 
@@ -192,7 +194,8 @@ export function restoreCollectionState(snapshot: PersistedJobSnapshot): Collecti
     maxLengthPercent: snapshot.state.maxLengthPercent ?? FILTER_DEFAULTS.maxLengthPercent,
     keywordFilterEnabled: snapshot.state.keywordFilterEnabled ?? FILTER_DEFAULTS.keywordFilterEnabled,
     keywords: snapshot.state.keywords || FILTER_DEFAULTS.keywords.join(", "),
-    excludeAmbiguousN: snapshot.state.excludeAmbiguousN ?? FILTER_DEFAULTS.excludeAmbiguousN
+    excludeAmbiguousN: snapshot.state.excludeAmbiguousN ?? FILTER_DEFAULTS.excludeAmbiguousN,
+    includeFullProvenance: snapshot.state.includeFullProvenance ?? true
   };
 }
 

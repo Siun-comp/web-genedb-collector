@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BLAST_DEFAULTS, FILTER_DEFAULTS } from "../src/config/defaults";
 import { normalizeParsedHspSequence, type BlastParseResult, type ParsedHsp } from "../src/domain/blastResultParser";
-import { buildGeneDbOutputBundle, outputFileNames, safeTaskName } from "../src/domain/outputs";
+import { buildGeneDbOutputBundle, outputFileNames, safeTaskName, type GeneDbOutputBundle } from "../src/domain/outputs";
 import type { CollectionFormState } from "../src/domain/types";
 
 describe("output helpers", () => {
@@ -18,14 +18,16 @@ describe("output helpers", () => {
     expect(safeTaskName("A".repeat(120))).toHaveLength(80);
   });
 
-  it("keeps GeneDB-compatible output file names", () => {
+  it("keeps GeneDB-compatible output file names with optional full provenance", () => {
     expect(outputFileNames("Task")).toEqual([
       "Task_Aligned.fasta",
       "Task_excluded_ambiguous.fasta",
       "Task_meta.json",
+      "Task_records.jsonl",
       "run_info.json",
       "process.log"
     ]);
+    expect(outputFileNames("Task", false)).toEqual(["Task_Aligned.fasta", "Task_excluded_ambiguous.fasta", "Task_meta.json", "run_info.json", "process.log"]);
   });
 
   it("builds GeneDB FASTA output without deduplicating accession-level records", () => {
@@ -46,13 +48,34 @@ describe("output helpers", () => {
     expect(bundle.ambiguousFasta).toContain(">Ambiguous_hit_ACCN\nCCCCNCCCCC");
   });
 
-  it("keeps provenance in meta.json and not in FASTA headers", () => {
+  it("splits summary meta.json from full provenance records.jsonl", () => {
     const bundle = buildGeneDbOutputBundle(baseState(), parseResult(), outputContext());
     const meta = JSON.parse(bundle.metaJson);
+    const rows = recordsJsonlRows(bundle);
 
     expect(bundle.alignedFasta).toContain(">Valid_hit_ACC001");
     expect(bundle.alignedFasta).not.toContain("evalue");
-    expect(meta.records[0]).toMatchObject({
+    expect(meta.records).toBeUndefined();
+    expect(meta.parserDropped).toBeUndefined();
+    expect(meta.outputManifest).toMatchObject({
+      metaMode: "summary_only",
+      fullProvenance: {
+        included: true,
+        format: "jsonl",
+        fileName: "Task_records.jsonl",
+        recordCount: 6,
+        parserDroppedCount: 1,
+        sequenceIncluded: false
+      }
+    });
+    expect(meta.recordSummary).toMatchObject({
+      outputRecordCount: 6,
+      parserDroppedCount: 1,
+      fullProvenanceMovedTo: "Task_records.jsonl"
+    });
+
+    expect(findOutputRecord(rows, "ACC001")).toMatchObject({
+      kind: "output_record",
       accession: "ACC001",
       title: "Valid hit",
       header: "Valid_hit_ACC001",
@@ -61,12 +84,20 @@ describe("output helpers", () => {
       queryRange: [2, 11],
       identity: 9,
       evalue: 0.001,
-      bitScore: 50
+      bitScore: 50,
+      sequenceIncluded: false
     });
-    expect(meta.parserDropped).toEqual([{ accession: "DROP001", title: "No sequence", reason: "No usable first HSP sequence" }]);
+    expect(findOutputRecord(rows, "ACC001").sequence).toBeUndefined();
+    expect(rows.find((row) => row.kind === "parser_dropped")).toMatchObject({
+      accession: "DROP001",
+      title: "No sequence",
+      disposition: "parser_dropped",
+      dropReason: "No usable first HSP sequence",
+      sequenceIncluded: false
+    });
   });
 
-  it("keeps partial XML diagnostics in meta.json and process.log", () => {
+  it("keeps partial XML diagnostics in summary meta, run_info, and process.log", () => {
     const bundle = buildGeneDbOutputBundle(baseState(), parseResult(), outputContext());
     const meta = JSON.parse(bundle.metaJson);
     const runInfo = JSON.parse(bundle.runInfoJson);
@@ -76,7 +107,6 @@ describe("output helpers", () => {
       partialXmlTail: true,
       completeness: {
         status: "partial_complete_hit_blocks",
-        message: "완성 Hit block만 회수됨",
         completeHitBlocksSeen: 6,
         partialXmlTail: true,
         partialTailPolicy: "complete_hit_blocks_only"
@@ -88,10 +118,10 @@ describe("output helpers", () => {
     });
     expect(runInfo.Result.completeness).toMatchObject({
       status: "partial_complete_hit_blocks",
-      message: "완성 Hit block만 회수됨"
+      partialTailPolicy: "complete_hit_blocks_only"
     });
     expect(bundle.processLog).toContain("partialXmlTail=true");
-    expect(bundle.processLog).toContain("완성 Hit block만 회수됨");
+    expect(bundle.processLog).toContain("Partial XML tail detected");
   });
 
   it("writes XML fallback success summary to meta.json, run_info.json, and process.log", () => {
@@ -105,7 +135,7 @@ describe("output helpers", () => {
         format: "JSON2_S" as const,
         reason: "http_status" as const,
         code: "failed_ncbi" as const,
-        message: "NCBI BLAST 결과 다운로드(JSON2_S)에 실패했습니다. HTTP 500 응답을 받았습니다."
+        message: "NCBI BLAST result download(JSON2_S) failed with HTTP 500."
       }
     };
     const bundle = buildGeneDbOutputBundle(baseState(), parseResult(), {
@@ -138,20 +168,12 @@ describe("output helpers", () => {
 
   it("applies length before keyword before ambiguous N separation", () => {
     const bundle = buildGeneDbOutputBundle(baseState(), parseResult(), outputContext());
-    const meta = JSON.parse(bundle.metaJson);
+    const rows = recordsJsonlRows(bundle);
 
-    expect(meta.records.find((record: { accession: string }) => record.accession === "LOWLEN")).toMatchObject({
-      disposition: "length_dropped"
-    });
-    expect(meta.records.find((record: { accession: string }) => record.accession === "HIGHLEN")).toMatchObject({
-      disposition: "length_dropped"
-    });
-    expect(meta.records.find((record: { accession: string }) => record.accession === "KW001")).toMatchObject({
-      disposition: "keyword_dropped"
-    });
-    expect(meta.records.find((record: { accession: string }) => record.accession === "ACCN")).toMatchObject({
-      disposition: "ambiguous"
-    });
+    expect(findOutputRecord(rows, "LOWLEN")).toMatchObject({ disposition: "length_dropped" });
+    expect(findOutputRecord(rows, "HIGHLEN")).toMatchObject({ disposition: "length_dropped" });
+    expect(findOutputRecord(rows, "KW001")).toMatchObject({ disposition: "keyword_dropped" });
+    expect(findOutputRecord(rows, "ACCN")).toMatchObject({ disposition: "ambiguous" });
   });
 
   it("keeps N-containing records in aligned FASTA when ambiguous separation is disabled", () => {
@@ -181,13 +203,10 @@ describe("output helpers", () => {
     ]);
     const bundle = buildGeneDbOutputBundle(baseState(), parse, outputContext());
     const meta = JSON.parse(bundle.metaJson);
+    const rows = recordsJsonlRows(bundle);
 
-    expect(meta.records.find((item: { accession: string }) => item.accession === "ACCN")).toMatchObject({
-      disposition: "ambiguous"
-    });
-    expect(meta.records.find((item: { accession: string }) => item.accession === "ACCR")).toMatchObject({
-      disposition: "aligned"
-    });
+    expect(findOutputRecord(rows, "ACCN")).toMatchObject({ disposition: "ambiguous" });
+    expect(findOutputRecord(rows, "ACCR")).toMatchObject({ disposition: "aligned" });
     expect(bundle.alignedFasta).toContain(">Non-N_IUPAC_hit_ACCR\nCCCCRCCCCC");
     expect(bundle.ambiguousFasta).toContain(">N_ambiguous_hit_ACCN\nCCCCNCCCCC");
     expect(meta.resultSequenceNormalization).toMatchObject({
@@ -203,7 +222,9 @@ describe("output helpers", () => {
     ]);
     const bundle = buildGeneDbOutputBundle({ ...baseState("AAAAA"), lengthFilterEnabled: false, keywordFilterEnabled: false }, parse, outputContext());
     const meta = JSON.parse(bundle.metaJson);
-    const combinedSafeFiles = [bundle.metaJson, bundle.runInfoJson, bundle.processLog, bundle.alignedFasta, bundle.ambiguousFasta].join("\n");
+    const rows = recordsJsonlRows(bundle);
+    const qseqRow = findOutputRecord(rows, "QSEQ001");
+    const combinedSafeFiles = [bundle.metaJson, bundle.runInfoJson, bundle.processLog, bundle.recordsJsonl ?? "", bundle.alignedFasta, bundle.ambiguousFasta].join("\n");
 
     expect(meta.resultSummary.qseqFallbackCount).toBe(1);
     expect(meta.resultSequenceNormalization).toMatchObject({
@@ -212,23 +233,64 @@ describe("output helpers", () => {
       qseqFallbackCount: 1,
       ambiguousPolicy: "n_only"
     });
-    expect(meta.records[0]).toMatchObject({
+    expect(qseqRow).toMatchObject({
       accession: "QSEQ001",
       sequenceSource: "qseq",
-      recordWarnings: ["Hsp_hseq missing; Hsp_qseq fallback used."]
+      recordWarnings: ["Hsp_hseq missing; Hsp_qseq fallback used."],
+      sequenceIncluded: false
     });
+    expect(qseqRow.sequence).toBeUndefined();
+    expect(bundle.recordsJsonl).not.toContain("AUUCC");
+    expect(bundle.recordsJsonl).not.toContain("ATTCC");
     expect(bundle.processLog).toContain("Result sequence normalization mode=U->T, uToT=2");
     expect(bundle.processLog).toContain("qseqFallback=1");
     expect(combinedSafeFiles).not.toContain("AUUCC");
   });
 
-  it("does not put raw query sequence or raw result text into metadata or process logs", () => {
+  it("can omit full provenance JSONL while keeping summary metadata", () => {
+    const bundle = buildGeneDbOutputBundle({ ...baseState(), includeFullProvenance: false }, parseResult(), outputContext());
+    const meta = JSON.parse(bundle.metaJson);
+    const runInfo = JSON.parse(bundle.runInfoJson);
+
+    expect(bundle.recordsJsonl).toBeNull();
+    expect(bundle.fileNames).not.toContain("Task_records.jsonl");
+    expect(meta.outputManifest.fullProvenance).toMatchObject({
+      included: false,
+      format: "jsonl",
+      fileName: null,
+      recordCount: 6,
+      parserDroppedCount: 1,
+      sequenceIncluded: false
+    });
+    expect(meta.recordSummary).toMatchObject({
+      outputRecordCount: 6,
+      parserDroppedCount: 1,
+      fullProvenanceMovedTo: null
+    });
+    expect(runInfo.Options.full_provenance_records_jsonl).toBe(false);
+    expect(bundle.processLog).toContain("fullProvenance=omitted");
+  });
+
+  it("keeps summary meta size independent from record-level provenance volume", () => {
+    const manyRecords = Array.from({ length: 200 }, (_, index) => record(`ACC${index}`, `Long synthetic title ${index} ${"x".repeat(200)}`, "CCCCCCCCCC"));
+    const bundle = buildGeneDbOutputBundle({ ...baseState(), lengthFilterEnabled: false, keywordFilterEnabled: false }, parseResultWithRecords(manyRecords), outputContext());
+    const meta = JSON.parse(bundle.metaJson);
+
+    expect(meta.records).toBeUndefined();
+    expect(meta.parserDropped).toBeUndefined();
+    expect(meta.outputManifest.fullProvenance.recordCount).toBe(200);
+    expect(bundle.recordsJsonl).not.toBeNull();
+    expect(bundle.metaJson.length).toBeLessThan(20_000);
+    expect(bundle.recordsJsonl!.length).toBeGreaterThan(bundle.metaJson.length);
+  });
+
+  it("does not put raw query sequence or raw result text into metadata, records JSONL, or process logs", () => {
     const state = baseState("AAAACCCCGGGGTTTT");
     const bundle = buildGeneDbOutputBundle(state, parseResult(), {
       ...outputContext(),
       processLogs: ["safe line", "accidental AAAACCCCGGGGTTTT raw query leak", "raw result marker should not contain downloaded text"]
     });
-    const combinedSafeFiles = [bundle.metaJson, bundle.runInfoJson, bundle.processLog].join("\n");
+    const combinedSafeFiles = [bundle.metaJson, bundle.recordsJsonl ?? "", bundle.runInfoJson, bundle.processLog].join("\n");
 
     expect(combinedSafeFiles).not.toContain("AAAACCCCGGGGTTTT");
     expect(combinedSafeFiles).toContain("[redacted_query_sequence]");
@@ -264,7 +326,8 @@ function baseState(referenceSequence = "AAAAAAAAAA"): CollectionFormState {
     maxLengthPercent: FILTER_DEFAULTS.maxLengthPercent,
     keywordFilterEnabled: true,
     keywords: FILTER_DEFAULTS.keywords.join(", "),
-    excludeAmbiguousN: true
+    excludeAmbiguousN: true,
+    includeFullProvenance: true
   };
 }
 
@@ -368,4 +431,18 @@ function outputContext() {
     resultRawLength: 1234,
     processLogs: ["Submit started. query=fnv1a32:00000000, length=10 bp"]
   };
+}
+
+function recordsJsonlRows(bundle: GeneDbOutputBundle): Array<Record<string, any>> {
+  expect(bundle.recordsJsonl).not.toBeNull();
+  return bundle.recordsJsonl!
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
+function findOutputRecord(rows: Array<Record<string, any>>, accession: string): Record<string, any> {
+  const item = rows.find((row) => row.kind === "output_record" && row.accession === accession);
+  expect(item).toBeDefined();
+  return item!;
 }

@@ -42,6 +42,7 @@ export interface GeneDbOutputBundle {
   alignedFasta: string;
   ambiguousFasta: string;
   metaJson: string;
+  recordsJsonl: string | null;
   runInfoJson: string;
   processLog: string;
   summary: ParserSummary;
@@ -68,15 +69,21 @@ export function safeTaskName(taskName: string): string {
   return safe || "Gene_Collection";
 }
 
-export function outputFileNames(taskName: string): string[] {
+export function outputFileNames(taskName: string, includeFullProvenance = true): string[] {
   const safeName = safeTaskName(taskName);
-  return [
+  const files = [
     `${safeName}_Aligned.fasta`,
     `${safeName}_excluded_ambiguous.fasta`,
-    `${safeName}_meta.json`,
+    `${safeName}_meta.json`
+  ];
+  if (includeFullProvenance) {
+    files.push(`${safeName}_records.jsonl`);
+  }
+  files.push(
     "run_info.json",
     "process.log"
-  ];
+  );
+  return files;
 }
 
 export function buildRunInfo(
@@ -107,7 +114,8 @@ export function buildRunInfo(
       max_len_pct: state.maxLengthPercent,
       use_kw_filter: state.keywordFilterEnabled,
       keywords: state.keywords,
-      exclude_ambiguous: state.excludeAmbiguousN
+      exclude_ambiguous: state.excludeAmbiguousN,
+      full_provenance_records_jsonl: state.includeFullProvenance !== false
     },
     Counts: counts ?? null,
     Result: resultDetails
@@ -166,6 +174,9 @@ export function buildGeneDbOutputBundle(state: CollectionFormState, parseResult:
   const alignedCount = outputRecords.filter((record) => record.disposition === "aligned").length;
   const droppedCount = parseResult.dropped.length + lengthDroppedCount + keywordDroppedCount;
   const outputLengths = outputRecords.filter((record) => record.disposition === "aligned").map((record) => record.sequenceLength);
+  const includeFullProvenance = state.includeFullProvenance !== false;
+  const fileNames = outputFileNames(state.taskName, includeFullProvenance) as GeneDbOutputBundle["fileNames"];
+  const recordsJsonl = includeFullProvenance ? buildRecordsJsonl(outputRecords, parseResult.dropped) : null;
   const summary: ParserSummary = {
     savedCount: alignedCount,
     droppedCount,
@@ -183,14 +194,15 @@ export function buildGeneDbOutputBundle(state: CollectionFormState, parseResult:
     fallback: context.resultFallback,
     completeness
   });
-  const meta = buildMetaJson(state, parseResult, context, summary, outputRecords, queryLength, queryHash, lengthBounds);
+  const meta = buildMetaJson(state, parseResult, context, summary, outputRecords, queryLength, queryHash, lengthBounds, fileNames);
   const log = buildProcessLog(state, parseResult, context, summary, queryLength, queryHash);
 
   return {
-    fileNames: outputFileNames(state.taskName) as GeneDbOutputBundle["fileNames"],
+    fileNames,
     alignedFasta: alignedEntries.join("\n"),
     ambiguousFasta: ambiguousEntries.join("\n"),
     metaJson: JSON.stringify(meta, null, 2),
+    recordsJsonl,
     runInfoJson: JSON.stringify(runInfo, null, 2),
     processLog: log,
     summary,
@@ -257,7 +269,8 @@ function buildMetaJson(
   records: OutputRecordMeta[],
   queryLength: number,
   queryHash: string,
-  lengthBounds: { minBp: number; maxBp: number } | null
+  lengthBounds: { minBp: number; maxBp: number } | null,
+  fileNames: string[]
 ) {
   const parserDiagnostics = sanitizeDiagnostics(parseResult.diagnostics, state.referenceSequence);
   const completeness = buildResultCompleteness(parseResult.diagnostics);
@@ -290,6 +303,18 @@ function buildMetaJson(
       fallback: context.resultFallback ?? null,
       completeness
     },
+    outputManifest: {
+      files: fileNames,
+      metaMode: "summary_only",
+      fullProvenance: {
+        included: state.includeFullProvenance !== false,
+        format: "jsonl",
+        fileName: state.includeFullProvenance === false ? null : `${safeTaskName(state.taskName)}_records.jsonl`,
+        recordCount: records.length,
+        parserDroppedCount: parseResult.dropped.length,
+        sequenceIncluded: false
+      }
+    },
     resultSequenceNormalization: parseResult.diagnostics?.resultSequenceNormalization ?? null,
     filters: {
       lengthFilterEnabled: state.lengthFilterEnabled,
@@ -302,8 +327,11 @@ function buildMetaJson(
     },
     counts: summary,
     parserDiagnostics,
-    records,
-    parserDropped: parseResult.dropped
+    recordSummary: {
+      outputRecordCount: records.length,
+      parserDroppedCount: parseResult.dropped.length,
+      fullProvenanceMovedTo: state.includeFullProvenance === false ? null : `${safeTaskName(state.taskName)}_records.jsonl`
+    }
   };
 }
 
@@ -326,6 +354,7 @@ function buildProcessLog(
     `Taxid=${state.taxid.trim()}`,
     `Result format=${context.resultFormat ?? parseResult.format}`,
     `Result response length=${context.resultRawLength ?? "unknown"}`,
+    `Metadata mode=summary_only, fullProvenance=${state.includeFullProvenance === false ? "omitted" : "records_jsonl"}, sequencesInProvenance=false`,
     ...(context.resultFallback ? [`Result fallback status=${context.resultFallback.status}, primary=${context.resultFallback.primaryFormat}, fallback=${context.resultFallback.fallbackFormat}`] : []),
     ...(context.resultFallback?.primaryFailure
       ? [
@@ -354,6 +383,29 @@ function buildProcessLog(
     ...context.processLogs.map((line) => `Process: ${redactSequence(line, state.referenceSequence)}`)
   ];
   return `${lines.join("\n")}\n`;
+}
+
+function buildRecordsJsonl(records: OutputRecordMeta[], dropped: BlastParseResult["dropped"]): string {
+  const outputRows = records.map((record) =>
+    JSON.stringify({
+      kind: "output_record",
+      ...record,
+      sequenceIncluded: false
+    })
+  );
+  const droppedRows = dropped.map((record, index) =>
+    JSON.stringify({
+      kind: "parser_dropped",
+      outputIndex: null,
+      parserDropIndex: index + 1,
+      accession: record.accession ?? null,
+      title: record.title ?? null,
+      disposition: "parser_dropped",
+      dropReason: record.reason,
+      sequenceIncluded: false
+    })
+  );
+  return [...outputRows, ...droppedRows].join("\n");
 }
 
 function buildResultCompleteness(diagnostics: BlastParseDiagnostics | undefined): ResultCompletenessSummary {

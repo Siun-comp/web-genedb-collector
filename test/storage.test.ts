@@ -49,6 +49,7 @@ describe("storage snapshot safety", () => {
     expect(restored.email).toBe("");
     expect(restored.maxHits).toBe(20000);
     expect(restored.lengthFilterEnabled).toBe(true);
+    expect(restored.includeFullProvenance).toBe(false);
   });
 
   it("preserves prior query summary when a restored job has no raw sequence", () => {
@@ -106,6 +107,7 @@ function stateWithSensitiveValues(): CollectionFormState {
     maxLengthPercent: FILTER_DEFAULTS.maxLengthPercent,
     keywordFilterEnabled: FILTER_DEFAULTS.keywordFilterEnabled,
     keywords: FILTER_DEFAULTS.keywords.join(", "),
-    excludeAmbiguousN: FILTER_DEFAULTS.excludeAmbiguousN
+    excludeAmbiguousN: FILTER_DEFAULTS.excludeAmbiguousN,
+    includeFullProvenance: false
   };
 }
