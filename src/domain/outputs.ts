@@ -1,5 +1,5 @@
 import { APP_NAME, APP_VERSION } from "../config/defaults";
-import type { BlastParseResult, ParsedHsp } from "./blastResultParser";
+import { normalizeParsedHspSequence, type BlastParseDiagnostics, type BlastParseResult, type ParsedHsp, type ParsedHspSequenceNormalization } from "./blastResultParser";
 import { buildEntrezQuery, cleanSequence, hashSequence, wrapSequence } from "./fasta";
 import { parseKeywords } from "./filters";
 import type { CollectionFormState, ParserSummary } from "./types";
@@ -25,6 +25,8 @@ export interface OutputRecordMeta {
   sequenceLength: number;
   hspIndex: number;
   sequenceSource: ParsedHsp["sequenceSource"];
+  sequenceNormalization: ParsedHspSequenceNormalization;
+  recordWarnings?: string[];
   hitRange?: [number, number];
   queryRange?: [number, number];
   identity?: number;
@@ -190,6 +192,9 @@ function formatFastaEntry(header: string, sequence: string): string {
 }
 
 function buildRecordMeta(record: ParsedHsp, outputIndex: number, header: string, disposition: OutputDisposition, dropReason?: string): OutputRecordMeta {
+  const sequenceNormalization = record.sequenceNormalization ?? normalizeParsedHspSequence(record.sequence).normalization;
+  const recordWarnings = record.sequenceSource === "qseq" ? ["Hsp_hseq missing; Hsp_qseq fallback used."] : undefined;
+
   return {
     outputIndex,
     accession: record.accession,
@@ -199,6 +204,8 @@ function buildRecordMeta(record: ParsedHsp, outputIndex: number, header: string,
     sequenceLength: record.sequence.length,
     hspIndex: record.hspIndex,
     sequenceSource: record.sequenceSource,
+    sequenceNormalization,
+    recordWarnings,
     hitRange: record.hitRange,
     queryRange: record.queryRange,
     identity: record.identity,
@@ -218,6 +225,7 @@ function buildMetaJson(
   queryHash: string,
   lengthBounds: { minBp: number; maxBp: number } | null
 ) {
+  const parserDiagnostics = sanitizeDiagnostics(parseResult.diagnostics, state.referenceSequence);
   return {
     taskId: safeTaskName(state.taskName),
     createdAt: new Date().toISOString(),
@@ -242,8 +250,10 @@ function buildMetaJson(
       downloadedAt: context.resultDownloadedAt ? new Date(context.resultDownloadedAt).toISOString() : null,
       responseLength: context.resultRawLength ?? null,
       completeHitBlocksSeen: parseResult.diagnostics?.completeHitBlocksSeen ?? null,
-      partialXmlTail: parseResult.diagnostics?.partialXmlTail ?? false
+      partialXmlTail: parseResult.diagnostics?.partialXmlTail ?? false,
+      qseqFallbackCount: parseResult.diagnostics?.qseqFallbackCount ?? 0
     },
+    resultSequenceNormalization: parseResult.diagnostics?.resultSequenceNormalization ?? null,
     filters: {
       lengthFilterEnabled: state.lengthFilterEnabled,
       minLengthPercent: state.minLengthPercent,
@@ -254,7 +264,7 @@ function buildMetaJson(
       excludeAmbiguousN: state.excludeAmbiguousN
     },
     counts: summary,
-    parserDiagnostics: parseResult.diagnostics ?? null,
+    parserDiagnostics,
     records,
     parserDropped: parseResult.dropped
   };
@@ -268,6 +278,7 @@ function buildProcessLog(
   queryLength: number,
   queryHash: string
 ): string {
+  const normalization = parseResult.diagnostics?.resultSequenceNormalization;
   const lines = [
     `${new Date().toISOString()} Output generated.`,
     `Task=${safeTaskName(state.taskName)}`,
@@ -280,14 +291,27 @@ function buildProcessLog(
     `Counts saved=${summary.savedCount}, ambiguous=${summary.ambiguousCount}, dropped=${summary.droppedCount}, unique=${summary.uniqueCount}, lengthDropped=${summary.lengthDroppedCount}, keywordDropped=${summary.keywordDroppedCount}`,
     `Filters length=${state.lengthFilterEnabled ? `${state.minLengthPercent}-${state.maxLengthPercent}%` : "off"}, keyword=${state.keywordFilterEnabled ? parseKeywords(state.keywords).join("|") || "none" : "off"}, ambiguousN=${state.excludeAmbiguousN ? "exclude" : "include"}`,
     `Parser diagnostics completeHitBlocksSeen=${parseResult.diagnostics?.completeHitBlocksSeen ?? "unknown"}, partialXmlTail=${parseResult.diagnostics?.partialXmlTail ?? false}`,
+    ...(normalization
+      ? [
+          `Result sequence normalization mode=U->T, uToT=${normalization.uToTCount}, N=${normalization.nCount}, otherIupac=${normalization.otherIupacAmbiguityCount}, qseqFallback=${normalization.qseqFallbackCount}, ambiguousPolicy=N-only`
+        ]
+      : []),
     ...(parseResult.diagnostics?.partialXmlTail
       ? ["Partial XML tail detected. XML 끝부분이 불완전하여 수신된 결과 중 완성된 Hit block만 회수했습니다."]
       : []),
-    ...(parseResult.diagnostics?.parserWarnings.map((line) => `Parser warning: ${line}`) ?? []),
+    ...(parseResult.diagnostics?.parserWarnings.map((line) => `Parser warning: ${redactSequence(line, state.referenceSequence)}`) ?? []),
     ...parseResult.logs.map((line) => `Parser: ${redactSequence(line, state.referenceSequence)}`),
     ...context.processLogs.map((line) => `Process: ${redactSequence(line, state.referenceSequence)}`)
   ];
   return `${lines.join("\n")}\n`;
+}
+
+function sanitizeDiagnostics(diagnostics: BlastParseDiagnostics | undefined, referenceSequence: string): BlastParseDiagnostics | null {
+  if (!diagnostics) return null;
+  return {
+    ...diagnostics,
+    parserWarnings: diagnostics.parserWarnings.map((line) => redactSequence(line, referenceSequence))
+  };
 }
 
 function redactSequence(value: string, referenceSequence: string): string {

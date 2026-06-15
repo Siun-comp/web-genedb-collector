@@ -28,6 +28,10 @@
 이미 구현된 것:
 
 - RNA 입력 `U`는 BLAST 제출 전 `T`로 변환된다.
+- Phase 9A 기준으로 BLAST result HSP의 `U`도 FASTA output 전 `T`로 변환된다.
+- `Hsp_hseq`가 없고 `Hsp_qseq`만 있는 record는 저장하되 `sequenceSource=qseq`, `qseqFallbackCount`, parser warning으로 표시한다.
+- ambiguous 분리 기준은 `N`만 유지한다. 다른 IUPAC ambiguity code는 drop하지 않고 count로 기록한다.
+- result sequence normalization summary는 UI/meta/process.log에 count/policy 중심으로 남기며 raw/original HSP sequence는 저장하지 않는다.
 - GenBank `ORIGIN ... //` 입력은 sequence body만 추출한다.
 - NCBI 줄번호/공백 입력은 숫자/공백 제거 후 처리한다.
 - JSON2_S 실패 후 XML fallback이 성공하면 전체 실패가 아니라고 표시한다.
@@ -37,8 +41,6 @@
 
 남은 문제:
 
-- BLAST 결과 HSP 자체에 `U`가 포함되는 RNA 결과를 어떻게 output FASTA에 저장할지 정책이 명확하지 않다.
-- `Hsp_hseq`가 없고 `Hsp_qseq`만 있는 record는 생물학적 provenance가 약하므로, 저장 여부와 표시 방식이 필요하다.
 - JSON2_S 실패 사유가 아직 사용자 친화적 분류로 충분히 나뉘지 않았다.
 - JSON2_S와 XML fallback이 모두 실패할 때 두 실패 원인이 함께 보존되어야 한다.
 - `partialXmlTail=true` 경고는 존재하지만, 최종 성공 상태와 ZIP output summary에서 더 강하게 보여줄 필요가 있다.
@@ -190,9 +192,15 @@ FASTA sequence 자체는 JSONL에 넣지 않는다.
 | D10 | large result format 우선순위 | JSON2_S 우선 / XML 계열 우선 / maxHits 기준 자동 | maxHits가 클 때 XML 계열 우선 검토 |
 | D11 | ZIP 실패 시 degradation 허용 | 허용 / 차단 / 사용자 선택 | 허용하되 빠진 파일 manifest를 명확히 표시 |
 
+확정된 항목:
+
+- D1: `U->T` 변환
+- D8: 저장하고 `sequenceSource=qseq`/warning/count 표시
+- D9: `N`만 ambiguous 분리, 다른 IUPAC ambiguity는 count만 기록
+
 ## 4. 구현 단계
 
-### Phase 9A. RNA result handling
+### Phase 9A. RNA result handling 완료
 
 작업:
 
@@ -201,10 +209,11 @@ FASTA sequence 자체는 JSONL에 넣지 않는다.
 - output metadata에 `resultSequenceNormalization` 기록
 - validation/result count에서 `U`를 정상 염기로 처리
 
-완료 기준:
+완료 결과:
 
-- HSP `AUGC`가 drop되지 않는다.
-- mode에 따라 `AUGC` 또는 `ATGC`로 FASTA에 저장된다.
+- HSP `AUGC`가 drop되지 않고 FASTA-ready sequence `ATGC`로 저장된다.
+- `qseq` fallback record는 저장하되 warning/count/provenance로 표시된다.
+- ambiguous split은 `N`만 유지하며, non-N IUPAC ambiguity는 count로 기록된다.
 - raw sequence는 log/meta에 들어가지 않는다.
 
 ### Phase 9B. Fallback/completeness reporting

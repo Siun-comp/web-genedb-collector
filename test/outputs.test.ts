@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BLAST_DEFAULTS, FILTER_DEFAULTS } from "../src/config/defaults";
-import type { BlastParseResult } from "../src/domain/blastResultParser";
+import { normalizeParsedHspSequence, type BlastParseResult, type ParsedHsp } from "../src/domain/blastResultParser";
 import { buildGeneDbOutputBundle, outputFileNames, safeTaskName } from "../src/domain/outputs";
 import type { CollectionFormState } from "../src/domain/types";
 
@@ -108,6 +108,65 @@ describe("output helpers", () => {
     expect(bundle.ambiguousFasta.trim()).toBe("");
   });
 
+  it("treats U-normalized records as aligned, not ambiguous", () => {
+    const normalized = normalizeParsedHspSequence("AUUGC");
+    const parse = parseResultWithRecords([record("RNA001", "RNA-like hit", normalized.sequence, "hseq", normalized.normalization)]);
+    const bundle = buildGeneDbOutputBundle({ ...baseState("AAAAA"), lengthFilterEnabled: false, keywordFilterEnabled: false }, parse, outputContext());
+
+    expect(bundle.alignedFasta).toContain(">RNA-like_hit_RNA001\nATTGC");
+    expect(bundle.alignedFasta).not.toContain("AUUGC");
+    expect(bundle.ambiguousFasta.trim()).toBe("");
+    expect(bundle.summary.ambiguousCount).toBe(0);
+  });
+
+  it("splits only N-containing ambiguous records while keeping other IUPAC ambiguity aligned", () => {
+    const parse = parseResultWithRecords([
+      record("ACCN", "N ambiguous hit", "CCCCNCCCCC"),
+      record("ACCR", "Non-N IUPAC hit", "CCCCRCCCCC")
+    ]);
+    const bundle = buildGeneDbOutputBundle(baseState(), parse, outputContext());
+    const meta = JSON.parse(bundle.metaJson);
+
+    expect(meta.records.find((item: { accession: string }) => item.accession === "ACCN")).toMatchObject({
+      disposition: "ambiguous"
+    });
+    expect(meta.records.find((item: { accession: string }) => item.accession === "ACCR")).toMatchObject({
+      disposition: "aligned"
+    });
+    expect(bundle.alignedFasta).toContain(">Non-N_IUPAC_hit_ACCR\nCCCCRCCCCC");
+    expect(bundle.ambiguousFasta).toContain(">N_ambiguous_hit_ACCN\nCCCCNCCCCC");
+    expect(meta.resultSequenceNormalization).toMatchObject({
+      otherIupacAmbiguityCount: 1,
+      ambiguousPolicy: "n_only"
+    });
+  });
+
+  it("writes result sequence normalization and qseq fallback summary without raw RNA HSP text", () => {
+    const normalized = normalizeParsedHspSequence("AUUCC");
+    const parse = parseResultWithRecords([record("QSEQ001", "qseq fallback RNA-like hit", normalized.sequence, "qseq", normalized.normalization)], [
+      "Hsp_hseq was missing for 1 record(s); Hsp_qseq fallback was saved with sequenceSource=qseq."
+    ]);
+    const bundle = buildGeneDbOutputBundle({ ...baseState("AAAAA"), lengthFilterEnabled: false, keywordFilterEnabled: false }, parse, outputContext());
+    const meta = JSON.parse(bundle.metaJson);
+    const combinedSafeFiles = [bundle.metaJson, bundle.runInfoJson, bundle.processLog, bundle.alignedFasta, bundle.ambiguousFasta].join("\n");
+
+    expect(meta.resultSummary.qseqFallbackCount).toBe(1);
+    expect(meta.resultSequenceNormalization).toMatchObject({
+      outputMode: "u_to_t",
+      uToTCount: 2,
+      qseqFallbackCount: 1,
+      ambiguousPolicy: "n_only"
+    });
+    expect(meta.records[0]).toMatchObject({
+      accession: "QSEQ001",
+      sequenceSource: "qseq",
+      recordWarnings: ["Hsp_hseq missing; Hsp_qseq fallback used."]
+    });
+    expect(bundle.processLog).toContain("Result sequence normalization mode=U->T, uToT=2");
+    expect(bundle.processLog).toContain("qseqFallback=1");
+    expect(combinedSafeFiles).not.toContain("AUUCC");
+  });
+
   it("does not put raw query sequence or raw result text into metadata or process logs", () => {
     const state = baseState("AAAACCCCGGGGTTTT");
     const bundle = buildGeneDbOutputBundle(state, parseResult(), {
@@ -185,18 +244,64 @@ function parseResult(): BlastParseResult {
   };
 }
 
-function record(accession: string, title: string, sequence: string) {
+function record(
+  accession: string,
+  title: string,
+  sequence: string,
+  sequenceSource: ParsedHsp["sequenceSource"] = "hseq",
+  sequenceNormalization = normalizeParsedHspSequence(sequence).normalization
+) {
   return {
     accession,
     title,
     sequence,
     hspIndex: 0,
-    sequenceSource: "hseq" as const,
+    sequenceSource,
+    sequenceNormalization,
     hitRange: [1, sequence.length] as [number, number],
     queryRange: [2, sequence.length + 1] as [number, number],
     identity: Math.max(0, sequence.length - 1),
     evalue: 0.001,
     bitScore: 50
+  };
+}
+
+function parseResultWithRecords(records: ParsedHsp[], parserWarnings: string[] = []): BlastParseResult {
+  const result = parseResult();
+  const normalization = records.reduce(
+    (summary, item) => {
+      const itemNormalization = item.sequenceNormalization ?? normalizeParsedHspSequence(item.sequence).normalization;
+      summary.recordCount += 1;
+      summary.uToTCount += itemNormalization.uToTCount;
+      summary.nCount += itemNormalization.nCount;
+      summary.otherIupacAmbiguityCount += itemNormalization.otherIupacAmbiguityCount;
+      summary.invalidCharacterCount += itemNormalization.invalidCharacterCount;
+      if (item.sequenceSource === "qseq") summary.qseqFallbackCount += 1;
+      return summary;
+    },
+    {
+      outputMode: "u_to_t" as const,
+      recordCount: 0,
+      uToTCount: 0,
+      nCount: 0,
+      otherIupacAmbiguityCount: 0,
+      invalidCharacterCount: 0,
+      qseqFallbackCount: 0,
+      ambiguousPolicy: "n_only" as const
+    }
+  );
+
+  return {
+    ...result,
+    records,
+    dropped: [],
+    diagnostics: {
+      completeHitBlocksSeen: records.length,
+      partialXmlTail: false,
+      parserWarnings,
+      qseqFallbackCount: normalization.qseqFallbackCount,
+      resultSequenceNormalization: normalization
+    }
   };
 }
 

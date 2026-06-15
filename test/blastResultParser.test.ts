@@ -42,6 +42,112 @@ describe("blast result parser skeleton", () => {
       sequence: "TTAACC",
       sequenceSource: "qseq"
     });
+    expect(result.diagnostics?.qseqFallbackCount).toBe(1);
+    expect(result.diagnostics?.parserWarnings.some((line) => line.includes("Hsp_qseq fallback"))).toBe(true);
+    expect(result.diagnostics?.parserWarnings.join("\n")).not.toContain("TT-AACC");
+  });
+
+  it("normalizes U to T in synthetic JSON2_S HSP result sequences", () => {
+    const syntheticJson = JSON.stringify({
+      hits: [
+        {
+          accession: "RNAJSON001",
+          title: "Synthetic RNA-like JSON hit",
+          hsps: [{ hseq: "AU-GCN", qseq: "AAAAAA" }]
+        }
+      ]
+    });
+
+    const result = parseBlastResultSkeleton(syntheticJson, "JSON2_S");
+
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0]).toMatchObject({
+      accession: "RNAJSON001",
+      sequence: "ATGCN",
+      sequenceSource: "hseq"
+    });
+    expect(result.diagnostics?.resultSequenceNormalization).toMatchObject({
+      outputMode: "u_to_t",
+      uToTCount: 1,
+      nCount: 1,
+      qseqFallbackCount: 0,
+      ambiguousPolicy: "n_only"
+    });
+  });
+
+  it("normalizes U to T in synthetic XML HSP result sequences", () => {
+    const syntheticXml = `<?xml version="1.0"?>
+<BlastOutput>
+  <BlastOutput_iterations>
+    <Iteration>
+      <Iteration_hits>
+        <Hit>
+          <Hit_accession>RNAXML001</Hit_accession>
+          <Hit_def>Synthetic RNA-like XML hit</Hit_def>
+          <Hit_hsps>
+            <Hsp>
+              <Hsp_hseq>AU-GC</Hsp_hseq>
+            </Hsp>
+          </Hit_hsps>
+        </Hit>
+      </Iteration_hits>
+    </Iteration>
+  </BlastOutput_iterations>
+</BlastOutput>`;
+
+    const result = parseBlastResultSkeleton(syntheticXml, "XML");
+
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0]).toMatchObject({
+      accession: "RNAXML001",
+      sequence: "ATGC",
+      sequenceSource: "hseq"
+    });
+    expect(result.diagnostics?.resultSequenceNormalization?.uToTCount).toBe(1);
+  });
+
+  it("prefers hseq over qseq and does not count fallback when hseq exists", () => {
+    const syntheticJson = JSON.stringify({
+      hits: [
+        {
+          accession: "HSEQ001",
+          title: "Synthetic hseq priority hit",
+          hsps: [{ hseq: "ATGC", qseq: "UUUU" }]
+        }
+      ]
+    });
+
+    const result = parseBlastResultSkeleton(syntheticJson, "JSON2_S");
+
+    expect(result.records[0]).toMatchObject({
+      accession: "HSEQ001",
+      sequence: "ATGC",
+      sequenceSource: "hseq"
+    });
+    expect(result.diagnostics?.qseqFallbackCount).toBe(0);
+    expect(result.diagnostics?.resultSequenceNormalization?.qseqFallbackCount).toBe(0);
+  });
+
+  it("counts non-N IUPAC ambiguity without dropping parser records", () => {
+    const syntheticJson = JSON.stringify({
+      hits: [
+        {
+          accession: "IUPAC001",
+          title: "Synthetic IUPAC ambiguity hit",
+          hsps: [{ hseq: "ATGRYV" }]
+        }
+      ]
+    });
+
+    const result = parseBlastResultSkeleton(syntheticJson, "JSON2_S");
+
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0].sequence).toBe("ATGRYV");
+    expect(result.diagnostics?.resultSequenceNormalization).toMatchObject({
+      otherIupacAmbiguityCount: 3,
+      nCount: 0,
+      ambiguousPolicy: "n_only"
+    });
   });
 
   it("parses synthetic XML hits", () => {

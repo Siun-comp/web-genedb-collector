@@ -977,6 +977,7 @@ function renderParseResult(parseResult?: BlastParseResult): string {
   const partialXmlNotice = parseResult.diagnostics?.partialXmlTail
     ? `<div class="warning">Partial XML tail detected. XML 끝부분이 불완전하여, 수신된 결과 중 완성된 Hit block만 회수했습니다.</div>`
     : "";
+  const normalization = parseResult.diagnostics?.resultSequenceNormalization;
 
   return `
     ${partialXmlNotice}
@@ -986,6 +987,9 @@ function renderParseResult(parseResult?: BlastParseResult): string {
       ${statusLine("Dropped hits", parseResult.dropped.length.toLocaleString())}
       ${statusLine("Complete Hit blocks", parseResult.diagnostics?.completeHitBlocksSeen === undefined ? "-" : parseResult.diagnostics.completeHitBlocksSeen.toLocaleString())}
       ${statusLine("Partial XML tail", parseResult.diagnostics?.partialXmlTail ? "yes" : "no")}
+      ${statusLine("Result U->T 변환", normalization ? `${normalization.uToTCount.toLocaleString()} bases` : "-")}
+      ${statusLine("qseq fallback", normalization ? `${normalization.qseqFallbackCount.toLocaleString()} records` : "-")}
+      ${statusLine("Non-N IUPAC 참고", normalization ? `${normalization.otherIupacAmbiguityCount.toLocaleString()} bases kept` : "-")}
       ${statusLine("Unique sequences", parseResult.summary.uniqueCount.toLocaleString())}
       ${statusLine("Length range", `${parseResult.summary.minLength.toLocaleString()}-${parseResult.summary.maxLength.toLocaleString()} bp`)}
       ${firstRecordLines}

@@ -11,6 +11,8 @@
 
 ## Phase 9A Prompt: RNA Result Handling
 
+상태: 완료. 구현 기준은 `U->T 변환`, `Hsp_qseq fallback 저장하고 경고`, ambiguous 분리 `N만`이다.
+
 ```text
 docs/PROJECT_STATE.md, docs/ARCHITECTURE.md, docs/DECISIONS.md, docs/NEXT_TASK.md, docs/FAILURES.md와
 web-genedb-collector/docs/LARGE_RESULT_STABILITY_PLAN.md를 기준으로 Phase 9A를 시작하라.

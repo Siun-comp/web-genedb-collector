@@ -7,6 +7,7 @@ export interface ParsedHsp {
   hspIndex: number;
   sequence: string;
   sequenceSource: "hseq" | "qseq";
+  sequenceNormalization?: ParsedHspSequenceNormalization;
   hitRange?: [number, number];
   queryRange?: [number, number];
   identity?: number;
@@ -33,6 +34,30 @@ export interface BlastParseDiagnostics {
   completeHitBlocksSeen: number;
   partialXmlTail: boolean;
   parserWarnings: string[];
+  qseqFallbackCount?: number;
+  resultSequenceNormalization?: ResultSequenceNormalizationSummary;
+}
+
+export type ResultSequenceOutputMode = "u_to_t";
+
+export interface ParsedHspSequenceNormalization {
+  outputMode: ResultSequenceOutputMode;
+  uToTCount: number;
+  nCount: number;
+  otherIupacAmbiguityCount: number;
+  invalidCharacterCount: number;
+}
+
+export interface ResultSequenceNormalizationSummary extends ParsedHspSequenceNormalization {
+  recordCount: number;
+  qseqFallbackCount: number;
+  ambiguousPolicy: "n_only";
+}
+
+interface NormalizedParsedHspSequence {
+  sequence: string;
+  normalization: ParsedHspSequenceNormalization;
+  invalidCharacters: string[];
 }
 
 export function parseBlastResultSkeleton(text: string, format: BlastResultFormat): BlastParseResult {
@@ -128,15 +153,16 @@ function parseJsonHsp(hsp: Record<string, unknown>, accession: string, title: st
   const hseq = readString(hsp, ["hseq", "Hsp_hseq"]);
   const qseq = readString(hsp, ["qseq", "Hsp_qseq"]);
   const sequenceSource = hseq ? "hseq" : qseq ? "qseq" : null;
-  const sequence = removeGaps(hseq || qseq || "");
-  if (!sequenceSource || !sequence) return null;
+  const normalized = normalizeParsedHspSequence(hseq || qseq || "");
+  if (!sequenceSource || !normalized.sequence || normalized.invalidCharacters.length > 0) return null;
 
   return {
     accession,
     title,
     hspIndex: 0,
-    sequence,
+    sequence: normalized.sequence,
     sequenceSource,
+    sequenceNormalization: normalized.normalization,
     hitRange: readRange(hsp, ["hit_from", "Hsp_hit-from"], ["hit_to", "Hsp_hit-to"]),
     queryRange: readRange(hsp, ["query_from", "Hsp_query-from"], ["query_to", "Hsp_query-to"]),
     identity: readNumber(hsp, ["identity", "Hsp_identity"]),
@@ -149,15 +175,16 @@ function parseXmlHsp(hspBlock: string, accession: string, title: string): Parsed
   const hseq = readXmlTag(hspBlock, "Hsp_hseq");
   const qseq = readXmlTag(hspBlock, "Hsp_qseq");
   const sequenceSource = hseq ? "hseq" : qseq ? "qseq" : null;
-  const sequence = removeGaps(hseq || qseq || "");
-  if (!sequenceSource || !sequence) return null;
+  const normalized = normalizeParsedHspSequence(hseq || qseq || "");
+  if (!sequenceSource || !normalized.sequence || normalized.invalidCharacters.length > 0) return null;
 
   return {
     accession,
     title,
     hspIndex: 0,
-    sequence,
+    sequence: normalized.sequence,
     sequenceSource,
+    sequenceNormalization: normalized.normalization,
     hitRange: xmlRange(hspBlock, "Hsp_hit-from", "Hsp_hit-to"),
     queryRange: xmlRange(hspBlock, "Hsp_query-from", "Hsp_query-to"),
     identity: xmlNumber(hspBlock, "Hsp_identity"),
@@ -245,12 +272,28 @@ function xmlRange(block: string, fromTag: string, toTag: string): [number, numbe
   return from !== undefined && to !== undefined ? [from, to] : undefined;
 }
 
-function removeGaps(sequence: string): string {
-  return sequence.replace(/-/g, "").toUpperCase();
+export function normalizeParsedHspSequence(sequence: string): NormalizedParsedHspSequence {
+  const uppercase = sequence.replace(/[\s-]/g, "").toUpperCase();
+  const uToTCount = countMatches(uppercase, "U");
+  const normalized = uppercase.replace(/U/g, "T");
+  const invalidCharacters = uniqueCharacters(normalized).filter((char) => !IUPAC_DNA_BASES.has(char));
+
+  return {
+    sequence: normalized,
+    normalization: {
+      outputMode: "u_to_t",
+      uToTCount,
+      nCount: countMatches(normalized, "N"),
+      otherIupacAmbiguityCount: [...normalized].filter((char) => OTHER_IUPAC_AMBIGUITY_BASES.has(char)).length,
+      invalidCharacterCount: [...normalized].filter((char) => !IUPAC_DNA_BASES.has(char)).length
+    },
+    invalidCharacters
+  };
 }
 
 function buildResult(format: BlastResultFormat, records: ParsedHsp[], dropped: DroppedHit[], logs: string[], diagnostics?: BlastParseDiagnostics): BlastParseResult {
   const lengths = records.map((record) => record.sequence.length);
+  const normalizedDiagnostics = withSequenceDiagnostics(records, diagnostics);
   return {
     format,
     records,
@@ -266,10 +309,69 @@ function buildResult(format: BlastResultFormat, records: ParsedHsp[], dropped: D
       minLength: lengths.length ? Math.min(...lengths) : 0,
       maxLength: lengths.length ? Math.max(...lengths) : 0
     },
-    diagnostics
+    diagnostics: normalizedDiagnostics
   };
 }
 
 function emptyResult(format: BlastResultFormat, reason: string, diagnostics?: BlastParseDiagnostics): BlastParseResult {
   return buildResult(format, [], [{ reason }], [reason], diagnostics);
 }
+
+function withSequenceDiagnostics(records: ParsedHsp[], diagnostics?: BlastParseDiagnostics): BlastParseDiagnostics {
+  const resultSequenceNormalization = summarizeResultSequenceNormalization(records);
+  const parserWarnings = [...(diagnostics?.parserWarnings ?? [])];
+
+  if (resultSequenceNormalization.uToTCount > 0) {
+    parserWarnings.push(`RNA U bases in BLAST result HSPs were converted to DNA T. count=${resultSequenceNormalization.uToTCount}`);
+  }
+  if (resultSequenceNormalization.qseqFallbackCount > 0) {
+    parserWarnings.push(`Hsp_hseq was missing for ${resultSequenceNormalization.qseqFallbackCount} record(s); Hsp_qseq fallback was saved with sequenceSource=qseq.`);
+  }
+  if (resultSequenceNormalization.otherIupacAmbiguityCount > 0) {
+    parserWarnings.push(`Non-N IUPAC ambiguity bases were detected but kept in aligned output. count=${resultSequenceNormalization.otherIupacAmbiguityCount}, ambiguousPolicy=N-only.`);
+  }
+
+  return {
+    completeHitBlocksSeen: diagnostics?.completeHitBlocksSeen ?? 0,
+    partialXmlTail: diagnostics?.partialXmlTail ?? false,
+    parserWarnings: [...new Set(parserWarnings)],
+    qseqFallbackCount: resultSequenceNormalization.qseqFallbackCount,
+    resultSequenceNormalization
+  };
+}
+
+function summarizeResultSequenceNormalization(records: ParsedHsp[]): ResultSequenceNormalizationSummary {
+  return records.reduce<ResultSequenceNormalizationSummary>(
+    (summary, record) => {
+      const normalization = record.sequenceNormalization ?? normalizeParsedHspSequence(record.sequence).normalization;
+      summary.recordCount += 1;
+      summary.uToTCount += normalization.uToTCount;
+      summary.nCount += normalization.nCount;
+      summary.otherIupacAmbiguityCount += normalization.otherIupacAmbiguityCount;
+      summary.invalidCharacterCount += normalization.invalidCharacterCount;
+      if (record.sequenceSource === "qseq") summary.qseqFallbackCount += 1;
+      return summary;
+    },
+    {
+      outputMode: "u_to_t",
+      recordCount: 0,
+      uToTCount: 0,
+      nCount: 0,
+      otherIupacAmbiguityCount: 0,
+      invalidCharacterCount: 0,
+      qseqFallbackCount: 0,
+      ambiguousPolicy: "n_only"
+    }
+  );
+}
+
+function countMatches(value: string, target: string): number {
+  return [...value].filter((char) => char === target).length;
+}
+
+function uniqueCharacters(value: string): string[] {
+  return [...new Set([...value])].sort();
+}
+
+const IUPAC_DNA_BASES = new Set(["A", "C", "G", "T", "N", "R", "Y", "S", "W", "K", "M", "B", "D", "H", "V"]);
+const OTHER_IUPAC_AMBIGUITY_BASES = new Set(["R", "Y", "S", "W", "K", "M", "B", "D", "H", "V"]);
