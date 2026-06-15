@@ -13,9 +13,9 @@ input target/reference DNA sequence
 
 ## Current Phase
 
-Phase 6 deployment preparation is in progress.
+Phase 7 large-result stabilization is in progress.
 
-Implemented through Phase 5:
+Implemented through Phase 7:
 
 - Vite + TypeScript static app
 - input cleaning and validation
@@ -27,6 +27,8 @@ Implemented through Phase 5:
 - length filter, keyword exclude, ambiguous N split
 - metadata, run_info, process.log, ZIP output
 - IndexedDB recovery for RID/status/options/count summary
+- large XML fallback parsing by complete `<Hit>...</Hit>` blocks
+- parser diagnostics for `completeHitBlocksSeen` and `partialXmlTail`
 
 IndexedDB is only a recovery aid. It does not store raw query sequence or raw BLAST result.
 
@@ -89,3 +91,7 @@ Smoke test plan:
 ## Important Limitation
 
 `HITLIST_SIZE=20000` to `100000` is a request value sent to NCBI, not a guaranteed result count. NCBI may return fewer hits because of actual database content, taxid scope, BLAST behavior, service limits, or network/service errors.
+
+For very large BLAST jobs, `JSON2_S` download can fail in the browser and the app may fall back to XML. If XML fallback succeeds, this is not a failed run.
+
+If metadata shows `partialXmlTail=true`, the downloaded XML did not end as a complete BLAST XML document. The app preserves complete hit blocks that were received, but this must be interpreted as "complete blocks recovered from the received response", not "all requested max hits were guaranteed."
