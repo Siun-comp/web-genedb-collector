@@ -39,6 +39,8 @@ web-genedb-collector/docs/LARGE_RESULT_STABILITY_PLAN.md를 기준으로 Phase 9
 
 ## Phase 9B Prompt: Fallback And Completeness Reporting
 
+상태: 완료. 구현 기준은 structured fallback object, `primaryFailure`/`fallbackFailure` 보존, `완성 Hit block만 회수됨` completeness 표시다.
+
 ```text
 web-genedb-collector/docs/LARGE_RESULT_STABILITY_PLAN.md를 기준으로 Phase 9B를 구현하라.
 

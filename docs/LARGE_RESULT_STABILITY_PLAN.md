@@ -32,6 +32,10 @@
 - `Hsp_hseq`가 없고 `Hsp_qseq`만 있는 record는 저장하되 `sequenceSource=qseq`, `qseqFallbackCount`, parser warning으로 표시한다.
 - ambiguous 분리 기준은 `N`만 유지한다. 다른 IUPAC ambiguity code는 drop하지 않고 count로 기록한다.
 - result sequence normalization summary는 UI/meta/process.log에 count/policy 중심으로 남기며 raw/original HSP sequence는 저장하지 않는다.
+- Phase 9B 기준으로 JSON2_S download/parse 실패 후 XML fallback이 성공하면 `fallback_succeeded`로 구조화해 표시한다.
+- JSON2_S와 XML fallback이 모두 실패하면 `primaryFailure`와 `fallbackFailure`를 함께 보존한다.
+- fallback failure reason은 `timeout`, `network_or_cors`, `http_status`, `empty_response`, `parse_failed`, `unknown`으로 분류한다.
+- `partialXmlTail=true`는 UI/log/meta/run_info에서 `완성 Hit block만 회수됨`으로 표시한다.
 - GenBank `ORIGIN ... //` 입력은 sequence body만 추출한다.
 - NCBI 줄번호/공백 입력은 숫자/공백 제거 후 처리한다.
 - JSON2_S 실패 후 XML fallback이 성공하면 전체 실패가 아니라고 표시한다.
@@ -41,9 +45,6 @@
 
 남은 문제:
 
-- JSON2_S 실패 사유가 아직 사용자 친화적 분류로 충분히 나뉘지 않았다.
-- JSON2_S와 XML fallback이 모두 실패할 때 두 실패 원인이 함께 보존되어야 한다.
-- `partialXmlTail=true` 경고는 존재하지만, 최종 성공 상태와 ZIP output summary에서 더 강하게 보여줄 필요가 있다.
 - `meta.json`이 record 수에 비례해 매우 커진다.
 - 대용량 result는 main thread에서 raw text -> parse -> records -> metadata -> ZIP을 만드는 과정에서 메모리 압박이 크다.
 - ZIP 생성 단계도 큰 FASTA 문자열과 metadata 문자열을 다시 복사하므로, parser 성공 후 ZIP 생성에서 실패할 수 있다.
@@ -216,7 +217,7 @@ FASTA sequence 자체는 JSONL에 넣지 않는다.
 - ambiguous split은 `N`만 유지하며, non-N IUPAC ambiguity는 count로 기록된다.
 - raw sequence는 log/meta에 들어가지 않는다.
 
-### Phase 9B. Fallback/completeness reporting
+### Phase 9B. Fallback/completeness reporting 완료
 
 작업:
 
@@ -225,11 +226,12 @@ FASTA sequence 자체는 JSONL에 넣지 않는다.
 - partial XML result badge 추가
 - process log 문구 통일
 
-완료 기준:
+완료 결과:
 
-- JSON2_S 실패 + XML 성공은 성공 상태로 표시된다.
+- JSON2_S 실패 + XML 성공은 `fallback_succeeded`로 표시된다.
+- JSON2_S와 XML fallback이 모두 실패하면 `primaryFailure`와 `fallbackFailure`를 함께 보존한다.
 - partial XML은 "완성 Hit block만 회수됨"으로 표시된다.
-- tests가 fallback code별 메시지를 검증한다.
+- tests가 fallback code별 메시지와 meta/run_info/process.log completeness를 검증한다.
 
 ### Phase 9C. Metadata split
 

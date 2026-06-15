@@ -42,6 +42,26 @@ export interface BlastResultDownload {
   rawLength: number;
   text: string;
   json2FailureReason?: string;
+  fallback?: BlastResultFallback;
+}
+
+export type BlastResultFailureReason = "timeout" | "network_or_cors" | "http_status" | "empty_response" | "parse_failed" | "unknown";
+
+export interface BlastResultFailure {
+  format: BlastResultFormat;
+  reason: BlastResultFailureReason;
+  code: BlastClientError["code"] | "unknown";
+  message: string;
+}
+
+export interface BlastResultFallback {
+  attempted: boolean;
+  status: "not_needed" | "fallback_succeeded" | "fallback_failed";
+  primaryFormat: "JSON2_S";
+  fallbackFormat: "XML";
+  primaryFailure?: BlastResultFailure;
+  fallbackFailure?: BlastResultFailure;
+  finalFormat?: BlastResultFormat;
 }
 
 export type BlastFetch = typeof fetch;
@@ -54,11 +74,13 @@ export interface BlastResultDownloadOptions {
 
 export class BlastClientError extends Error {
   readonly code: "failed_network" | "failed_cors" | "failed_ncbi" | "failed_parse" | "failed_unknown_rid" | "failed_timeout";
+  readonly fallback?: BlastResultFallback;
 
-  constructor(code: BlastClientError["code"], message: string) {
+  constructor(code: BlastClientError["code"], message: string, fallback?: BlastResultFallback) {
     super(message);
     this.name = "BlastClientError";
     this.code = code;
+    this.fallback = fallback;
   }
 }
 
@@ -200,6 +222,7 @@ export async function downloadBlastResult(
   if (!text.trim()) {
     throw new BlastClientError("failed_parse", "NCBI BLAST 결과 응답이 비어 있습니다.");
   }
+  validateBlastResultText(text, format);
 
   return {
     rid: normalizedRid,
@@ -210,19 +233,70 @@ export async function downloadBlastResult(
   };
 }
 
+function validateBlastResultText(text: string, format: BlastResultFormat): void {
+  const trimmed = text.trim();
+  if (format === "JSON2_S") {
+    try {
+      JSON.parse(trimmed);
+    } catch {
+      throw new BlastClientError("failed_parse", "NCBI BLAST JSON2_S 결과 응답을 JSON으로 해석하지 못했습니다.");
+    }
+    return;
+  }
+  if (!trimmed.startsWith("<")) {
+    throw new BlastClientError("failed_parse", "NCBI BLAST XML 결과 응답이 XML 형식으로 보이지 않습니다.");
+  }
+}
+
 export async function downloadBlastResultWithFallback(
   rid: string,
   fetcher: BlastFetch = fetch,
   options: BlastResultDownloadOptions = {}
 ): Promise<BlastResultDownload> {
   try {
-    return await downloadBlastResult(rid, "JSON2_S", fetcher, options);
-  } catch (error) {
-    const xmlResult = await downloadBlastResult(rid, "XML", fetcher, options);
+    const jsonResult = await downloadBlastResult(rid, "JSON2_S", fetcher, options);
     return {
-      ...xmlResult,
-      json2FailureReason: summarizeDownloadError(error)
+      ...jsonResult,
+      fallback: {
+        attempted: false,
+        status: "not_needed",
+        primaryFormat: "JSON2_S",
+        fallbackFormat: "XML",
+        finalFormat: "JSON2_S"
+      }
     };
+  } catch (error) {
+    const primaryFailure = classifyDownloadFailure(error, "JSON2_S");
+    try {
+      const xmlResult = await downloadBlastResult(rid, "XML", fetcher, options);
+      return {
+        ...xmlResult,
+        json2FailureReason: summarizeDownloadError(error),
+        fallback: {
+          attempted: true,
+          status: "fallback_succeeded",
+          primaryFormat: "JSON2_S",
+          fallbackFormat: "XML",
+          primaryFailure,
+          finalFormat: "XML"
+        }
+      };
+    } catch (fallbackError) {
+      const fallbackFailure = classifyDownloadFailure(fallbackError, "XML");
+      const fallback: BlastResultFallback = {
+        attempted: true,
+        status: "fallback_failed",
+        primaryFormat: "JSON2_S",
+        fallbackFormat: "XML",
+        primaryFailure,
+        fallbackFailure
+      };
+      throw new BlastClientError(
+        fallbackFailure.code === "unknown" ? "failed_network" : fallbackFailure.code,
+        `JSON2_S download failed and XML fallback also failed. primary=${formatFailureForLog(primaryFailure)}; fallback=${formatFailureForLog(fallbackFailure)}`,
+        fallback
+      );
+    }
   }
 }
 
@@ -234,6 +308,44 @@ function summarizeDownloadError(error: unknown): string {
   if (error instanceof BlastClientError) return `${error.code}: ${error.message}`;
   if (error instanceof Error) return error.message;
   return "unknown JSON2_S download error";
+}
+
+export function classifyDownloadFailure(error: unknown, format: BlastResultFormat): BlastResultFailure {
+  if (error instanceof BlastClientError) {
+    return {
+      format,
+      reason: mapClientErrorToFailureReason(error),
+      code: error.code,
+      message: error.message
+    };
+  }
+  if (error instanceof Error) {
+    return {
+      format,
+      reason: "unknown",
+      code: "unknown",
+      message: error.message
+    };
+  }
+  return {
+    format,
+    reason: "unknown",
+    code: "unknown",
+    message: "Unknown download error"
+  };
+}
+
+export function formatFailureForLog(failure: BlastResultFailure): string {
+  return `${failure.format}/${failure.reason}/${failure.code}: ${failure.message}`;
+}
+
+function mapClientErrorToFailureReason(error: BlastClientError): BlastResultFailureReason {
+  if (error.code === "failed_timeout") return "timeout";
+  if (error.code === "failed_network" || error.code === "failed_cors") return "network_or_cors";
+  if (error.code === "failed_ncbi") return "http_status";
+  if (error.code === "failed_parse" && /비어|empty/i.test(error.message)) return "empty_response";
+  if (error.code === "failed_parse") return "parse_failed";
+  return "unknown";
 }
 
 export function nextPollDelayMs(rtoeSeconds?: number): number {

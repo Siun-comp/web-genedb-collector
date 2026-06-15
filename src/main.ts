@@ -19,9 +19,11 @@ import {
   BlastClientError,
   buildSafeBlastRequestPreview,
   downloadBlastResultWithFallback,
+  formatFailureForLog,
   getBlastSearchInfo,
   nextPollDelayMs,
   submitBlastRequest,
+  type BlastResultFallback,
   type BlastSearchStatus
 } from "./services/blastClient";
 import {
@@ -80,6 +82,7 @@ interface RuntimeJob {
   resultFormat?: string;
   resultDownloadedAt?: number;
   resultRawLength?: number;
+  resultFallback?: BlastResultFallback;
   restoredQuery?: StoredQuerySummary;
   restoredAt?: string;
   storageMessage?: string;
@@ -283,6 +286,7 @@ function render(focusToRestore?: { id: string; start: number | null; end: number
               ${statusLine("Result format", job.resultFormat ?? "-")}
               ${statusLine("Result downloaded", job.resultDownloadedAt ? formatTime(job.resultDownloadedAt) : "-")}
               ${statusLine("Result response length", job.resultRawLength === undefined ? "-" : `${job.resultRawLength.toLocaleString()} chars`)}
+              ${statusLine("Result fallback", formatFallbackStatus(job.resultFallback))}
             </div>
           </section>
 
@@ -619,12 +623,13 @@ async function downloadReadyResult(): Promise<void> {
     const result = await downloadBlastResultWithFallback(rid, fetch, { hitlistSize: state.maxHits, ncbiGi: true });
     const parseResult = parseBlastResultSkeleton(result.text, result.format);
     const resultDownloadedAt = Date.parse(result.downloadedAt);
-    const logsBeforeOutput = result.json2FailureReason ? appendLog(job.logs, formatJson2FallbackSuccess(result.json2FailureReason)) : job.logs;
+    const logsBeforeOutput = result.fallback?.status === "fallback_succeeded" ? appendLog(job.logs, formatJson2FallbackSuccess(result.fallback, result.json2FailureReason)) : job.logs;
     const outputBundle = buildGeneDbOutputBundle(state, parseResult, {
       rid,
       resultFormat: result.format,
       resultDownloadedAt,
       resultRawLength: result.rawLength,
+      resultFallback: result.fallback,
       processLogs: logsBeforeOutput
     });
     const completeHitBlocks = parseResult.diagnostics?.completeHitBlocksSeen;
@@ -638,12 +643,13 @@ async function downloadReadyResult(): Promise<void> {
       resultFormat: result.format,
       resultDownloadedAt,
       resultRawLength: result.rawLength,
+      resultFallback: result.fallback,
       title: "FASTA / ZIP 준비 완료",
       detail: `Aligned=${outputBundle.summary.savedCount}, N 분리=${outputBundle.summary.ambiguousCount}, 제외=${outputBundle.summary.droppedCount}.`,
       action: "결과를 확인한 뒤 ZIP 다운로드를 누르세요.",
       logs: appendLog(
         logsBeforeOutput,
-        `Result downloaded and output prepared. rid=${rid}, format=${result.format}, responseLength=${result.rawLength}, aligned=${outputBundle.summary.savedCount}, ambiguous=${outputBundle.summary.ambiguousCount}, dropped=${outputBundle.summary.droppedCount}, completeHitBlocks=${completeHitBlocks ?? "unknown"}, partialXmlTail=${partialXmlTail}`
+        `Result downloaded and output prepared. rid=${rid}, format=${result.format}, responseLength=${result.rawLength}, aligned=${outputBundle.summary.savedCount}, ambiguous=${outputBundle.summary.ambiguousCount}, dropped=${outputBundle.summary.droppedCount}, completeHitBlocks=${completeHitBlocks ?? "unknown"}, partialXmlTail=${partialXmlTail}${partialXmlTail ? ", completeness=완성 Hit block만 회수됨" : ""}`
       )
     };
     persistSnapshot();
@@ -654,8 +660,9 @@ async function downloadReadyResult(): Promise<void> {
   render();
 }
 
-function formatJson2FallbackSuccess(reason: string): string {
-  return `JSON2_S large download failed; XML fallback succeeded. 대용량 JSON2_S 다운로드 실패 후 XML로 재시도해 성공했습니다. reason=${reason}`;
+function formatJson2FallbackSuccess(fallback: BlastResultFallback, legacyReason?: string): string {
+  const primary = fallback.primaryFailure ? ` primary=${fallback.primaryFailure.reason}/${fallback.primaryFailure.code}` : "";
+  return `JSON2_S large download failed; XML fallback succeeded. 대용량 JSON2_S 다운로드 실패 후 XML로 재시도해 성공했습니다.${primary}${legacyReason ? ` legacyReason=${legacyReason}` : ""}`;
 }
 
 async function handleDownloadZip(): Promise<void> {
@@ -745,6 +752,7 @@ function outputContext(): OutputContext {
     resultFormat: job.resultFormat,
     resultDownloadedAt: job.resultDownloadedAt,
     resultRawLength: job.resultRawLength,
+    resultFallback: job.resultFallback,
     queryLength: job.restoredQuery?.length,
     queryHash: job.restoredQuery?.hash,
     processLogs: job.logs
@@ -858,6 +866,10 @@ function canManualPoll(): boolean {
 function errorJob(error: unknown, previousLogs: string[]): RuntimeJob {
   const code = error instanceof BlastClientError ? error.code : "failed_network";
   const message = error instanceof Error ? error.message : "알 수 없는 오류가 발생했습니다.";
+  let logs = appendLog(previousLogs, `Error ${code}: ${message}`);
+  if (error instanceof BlastClientError && error.fallback?.status === "fallback_failed") {
+    logs = appendLog(logs, `Result download fallback failed. primary=${error.fallback.primaryFailure ? formatFailureForLog(error.fallback.primaryFailure) : "unknown"}; fallback=${error.fallback.fallbackFailure ? formatFailureForLog(error.fallback.fallbackFailure) : "unknown"}`);
+  }
   return {
     ...job,
     status: code,
@@ -866,7 +878,7 @@ function errorJob(error: unknown, previousLogs: string[]): RuntimeJob {
     title: errorTitle(code),
     detail: message,
     action: errorAction(code),
-    logs: appendLog(previousLogs, `Error ${code}: ${message}`)
+    logs
   };
 }
 
@@ -1078,6 +1090,16 @@ function metric(label: string, value: string): string {
 
 function statusLine(label: string, value: string): string {
   return `<div class="status-line"><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}</div>`;
+}
+
+function formatFallbackStatus(fallback?: BlastResultFallback): string {
+  if (!fallback) return "-";
+  if (fallback.status === "not_needed") return "JSON2_S success";
+  if (fallback.status === "fallback_succeeded") {
+    const reason = fallback.primaryFailure ? ` (${fallback.primaryFailure.reason})` : "";
+    return `JSON2_S failed, XML fallback succeeded${reason}`;
+  }
+  return "JSON2_S failed, XML fallback failed";
 }
 
 function option(value: string, selected: string): string {

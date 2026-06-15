@@ -69,16 +69,71 @@ describe("output helpers", () => {
   it("keeps partial XML diagnostics in meta.json and process.log", () => {
     const bundle = buildGeneDbOutputBundle(baseState(), parseResult(), outputContext());
     const meta = JSON.parse(bundle.metaJson);
+    const runInfo = JSON.parse(bundle.runInfoJson);
 
     expect(meta.resultSummary).toMatchObject({
       completeHitBlocksSeen: 6,
-      partialXmlTail: true
+      partialXmlTail: true,
+      completeness: {
+        status: "partial_complete_hit_blocks",
+        message: "완성 Hit block만 회수됨",
+        completeHitBlocksSeen: 6,
+        partialXmlTail: true,
+        partialTailPolicy: "complete_hit_blocks_only"
+      }
     });
     expect(meta.parserDiagnostics).toMatchObject({
       completeHitBlocksSeen: 6,
       partialXmlTail: true
     });
-    expect(bundle.processLog).toContain("Partial XML tail detected. XML 끝부분이 불완전하여 수신된 결과 중 완성된 Hit block만 회수했습니다.");
+    expect(runInfo.Result.completeness).toMatchObject({
+      status: "partial_complete_hit_blocks",
+      message: "완성 Hit block만 회수됨"
+    });
+    expect(bundle.processLog).toContain("partialXmlTail=true");
+    expect(bundle.processLog).toContain("완성 Hit block만 회수됨");
+  });
+
+  it("writes XML fallback success summary to meta.json, run_info.json, and process.log", () => {
+    const fallback = {
+      attempted: true,
+      status: "fallback_succeeded" as const,
+      primaryFormat: "JSON2_S" as const,
+      fallbackFormat: "XML" as const,
+      finalFormat: "XML" as const,
+      primaryFailure: {
+        format: "JSON2_S" as const,
+        reason: "http_status" as const,
+        code: "failed_ncbi" as const,
+        message: "NCBI BLAST 결과 다운로드(JSON2_S)에 실패했습니다. HTTP 500 응답을 받았습니다."
+      }
+    };
+    const bundle = buildGeneDbOutputBundle(baseState(), parseResult(), {
+      ...outputContext(),
+      resultFormat: "XML",
+      resultFallback: fallback,
+      processLogs: ["JSON2_S large download failed; XML fallback succeeded. primary=http_status/failed_ncbi"]
+    });
+    const meta = JSON.parse(bundle.metaJson);
+    const runInfo = JSON.parse(bundle.runInfoJson);
+
+    expect(meta.resultSummary).toMatchObject({
+      format: "XML",
+      fallback: {
+        status: "fallback_succeeded",
+        primaryFailure: {
+          reason: "http_status",
+          code: "failed_ncbi"
+        }
+      }
+    });
+    expect(runInfo.Result.fallback).toMatchObject({
+      status: "fallback_succeeded",
+      primaryFormat: "JSON2_S",
+      fallbackFormat: "XML"
+    });
+    expect(bundle.processLog).toContain("Result fallback status=fallback_succeeded");
+    expect(bundle.processLog).toContain("JSON2_S large download failed; XML fallback succeeded");
   });
 
   it("applies length before keyword before ambiguous N separation", () => {

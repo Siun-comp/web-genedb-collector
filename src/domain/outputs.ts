@@ -2,6 +2,7 @@ import { APP_NAME, APP_VERSION } from "../config/defaults";
 import { normalizeParsedHspSequence, type BlastParseDiagnostics, type BlastParseResult, type ParsedHsp, type ParsedHspSequenceNormalization } from "./blastResultParser";
 import { buildEntrezQuery, cleanSequence, hashSequence, wrapSequence } from "./fasta";
 import { parseKeywords } from "./filters";
+import type { BlastResultFallback } from "../services/blastClient";
 import type { CollectionFormState, ParserSummary } from "./types";
 
 export interface OutputContext {
@@ -11,6 +12,7 @@ export interface OutputContext {
   resultRawLength?: number;
   queryLength?: number;
   queryHash?: string;
+  resultFallback?: BlastResultFallback;
   processLogs: string[];
 }
 
@@ -47,6 +49,14 @@ export interface GeneDbOutputBundle {
   parserDroppedCount: number;
 }
 
+export interface ResultCompletenessSummary {
+  status: "complete" | "partial_complete_hit_blocks" | "unknown";
+  message: string;
+  completeHitBlocksSeen: number | null;
+  partialXmlTail: boolean;
+  partialTailPolicy: "not_applicable" | "complete_hit_blocks_only";
+}
+
 export function safeTaskName(taskName: string): string {
   const trimmed = taskName.trim() || "Gene_Collection";
   const safe = trimmed
@@ -69,7 +79,17 @@ export function outputFileNames(taskName: string): string[] {
   ];
 }
 
-export function buildRunInfo(state: CollectionFormState, rid: string | undefined, counts?: ParserSummary) {
+export function buildRunInfo(
+  state: CollectionFormState,
+  rid: string | undefined,
+  counts?: ParserSummary,
+  resultDetails?: {
+    format?: string;
+    responseLength?: number;
+    fallback?: BlastResultFallback;
+    completeness?: ResultCompletenessSummary;
+  }
+) {
   return {
     TaskID: safeTaskName(state.taskName),
     Date: new Date().toISOString(),
@@ -89,7 +109,15 @@ export function buildRunInfo(state: CollectionFormState, rid: string | undefined
       keywords: state.keywords,
       exclude_ambiguous: state.excludeAmbiguousN
     },
-    Counts: counts ?? null
+    Counts: counts ?? null,
+    Result: resultDetails
+      ? {
+          format: resultDetails.format ?? null,
+          responseLength: resultDetails.responseLength ?? null,
+          fallback: resultDetails.fallback ?? null,
+          completeness: resultDetails.completeness ?? null
+        }
+      : null
   };
 }
 
@@ -148,7 +176,13 @@ export function buildGeneDbOutputBundle(state: CollectionFormState, parseResult:
     minLength: outputLengths.length ? Math.min(...outputLengths) : 0,
     maxLength: outputLengths.length ? Math.max(...outputLengths) : 0
   };
-  const runInfo = buildRunInfo(state, context.rid, summary);
+  const completeness = buildResultCompleteness(parseResult.diagnostics);
+  const runInfo = buildRunInfo(state, context.rid, summary, {
+    format: context.resultFormat ?? parseResult.format,
+    responseLength: context.resultRawLength,
+    fallback: context.resultFallback,
+    completeness
+  });
   const meta = buildMetaJson(state, parseResult, context, summary, outputRecords, queryLength, queryHash, lengthBounds);
   const log = buildProcessLog(state, parseResult, context, summary, queryLength, queryHash);
 
@@ -226,6 +260,7 @@ function buildMetaJson(
   lengthBounds: { minBp: number; maxBp: number } | null
 ) {
   const parserDiagnostics = sanitizeDiagnostics(parseResult.diagnostics, state.referenceSequence);
+  const completeness = buildResultCompleteness(parseResult.diagnostics);
   return {
     taskId: safeTaskName(state.taskName),
     createdAt: new Date().toISOString(),
@@ -251,7 +286,9 @@ function buildMetaJson(
       responseLength: context.resultRawLength ?? null,
       completeHitBlocksSeen: parseResult.diagnostics?.completeHitBlocksSeen ?? null,
       partialXmlTail: parseResult.diagnostics?.partialXmlTail ?? false,
-      qseqFallbackCount: parseResult.diagnostics?.qseqFallbackCount ?? 0
+      qseqFallbackCount: parseResult.diagnostics?.qseqFallbackCount ?? 0,
+      fallback: context.resultFallback ?? null,
+      completeness
     },
     resultSequenceNormalization: parseResult.diagnostics?.resultSequenceNormalization ?? null,
     filters: {
@@ -279,6 +316,7 @@ function buildProcessLog(
   queryHash: string
 ): string {
   const normalization = parseResult.diagnostics?.resultSequenceNormalization;
+  const completeness = buildResultCompleteness(parseResult.diagnostics);
   const lines = [
     `${new Date().toISOString()} Output generated.`,
     `Task=${safeTaskName(state.taskName)}`,
@@ -288,22 +326,62 @@ function buildProcessLog(
     `Taxid=${state.taxid.trim()}`,
     `Result format=${context.resultFormat ?? parseResult.format}`,
     `Result response length=${context.resultRawLength ?? "unknown"}`,
+    ...(context.resultFallback ? [`Result fallback status=${context.resultFallback.status}, primary=${context.resultFallback.primaryFormat}, fallback=${context.resultFallback.fallbackFormat}`] : []),
+    ...(context.resultFallback?.primaryFailure
+      ? [
+          `Result fallback primaryFailure format=${context.resultFallback.primaryFailure.format}, reason=${context.resultFallback.primaryFailure.reason}, code=${context.resultFallback.primaryFailure.code}`
+        ]
+      : []),
+    ...(context.resultFallback?.fallbackFailure
+      ? [
+          `Result fallback fallbackFailure format=${context.resultFallback.fallbackFailure.format}, reason=${context.resultFallback.fallbackFailure.reason}, code=${context.resultFallback.fallbackFailure.code}`
+        ]
+      : []),
     `Counts saved=${summary.savedCount}, ambiguous=${summary.ambiguousCount}, dropped=${summary.droppedCount}, unique=${summary.uniqueCount}, lengthDropped=${summary.lengthDroppedCount}, keywordDropped=${summary.keywordDroppedCount}`,
     `Filters length=${state.lengthFilterEnabled ? `${state.minLengthPercent}-${state.maxLengthPercent}%` : "off"}, keyword=${state.keywordFilterEnabled ? parseKeywords(state.keywords).join("|") || "none" : "off"}, ambiguousN=${state.excludeAmbiguousN ? "exclude" : "include"}`,
     `Parser diagnostics completeHitBlocksSeen=${parseResult.diagnostics?.completeHitBlocksSeen ?? "unknown"}, partialXmlTail=${parseResult.diagnostics?.partialXmlTail ?? false}`,
+    `Result completeness status=${completeness.status}, message=${completeness.message}`,
     ...(normalization
       ? [
           `Result sequence normalization mode=U->T, uToT=${normalization.uToTCount}, N=${normalization.nCount}, otherIupac=${normalization.otherIupacAmbiguityCount}, qseqFallback=${normalization.qseqFallbackCount}, ambiguousPolicy=N-only`
         ]
       : []),
     ...(parseResult.diagnostics?.partialXmlTail
-      ? ["Partial XML tail detected. XML 끝부분이 불완전하여 수신된 결과 중 완성된 Hit block만 회수했습니다."]
+      ? ["Partial XML tail detected. 완성 Hit block만 회수됨. XML 끝부분이 불완전하여 수신된 결과 중 완성된 Hit block만 회수했습니다."]
       : []),
     ...(parseResult.diagnostics?.parserWarnings.map((line) => `Parser warning: ${redactSequence(line, state.referenceSequence)}`) ?? []),
     ...parseResult.logs.map((line) => `Parser: ${redactSequence(line, state.referenceSequence)}`),
     ...context.processLogs.map((line) => `Process: ${redactSequence(line, state.referenceSequence)}`)
   ];
   return `${lines.join("\n")}\n`;
+}
+
+function buildResultCompleteness(diagnostics: BlastParseDiagnostics | undefined): ResultCompletenessSummary {
+  if (!diagnostics) {
+    return {
+      status: "unknown",
+      message: "Result completeness could not be determined.",
+      completeHitBlocksSeen: null,
+      partialXmlTail: false,
+      partialTailPolicy: "not_applicable"
+    };
+  }
+  if (diagnostics.partialXmlTail) {
+    return {
+      status: "partial_complete_hit_blocks",
+      message: "완성 Hit block만 회수됨",
+      completeHitBlocksSeen: diagnostics.completeHitBlocksSeen,
+      partialXmlTail: true,
+      partialTailPolicy: "complete_hit_blocks_only"
+    };
+  }
+  return {
+    status: "complete",
+    message: "Complete result parsed.",
+    completeHitBlocksSeen: diagnostics.completeHitBlocksSeen,
+    partialXmlTail: false,
+    partialTailPolicy: "not_applicable"
+  };
 }
 
 function sanitizeDiagnostics(diagnostics: BlastParseDiagnostics | undefined, referenceSequence: string): BlastParseDiagnostics | null {

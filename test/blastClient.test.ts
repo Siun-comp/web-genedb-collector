@@ -198,6 +198,81 @@ ORIGIN
     expect(result.format).toBe("XML");
     expect(result.text).toBe("<BlastOutput></BlastOutput>");
     expect(result.json2FailureReason).toContain("failed_ncbi");
+    expect(result.fallback).toMatchObject({
+      attempted: true,
+      status: "fallback_succeeded",
+      primaryFormat: "JSON2_S",
+      fallbackFormat: "XML",
+      finalFormat: "XML",
+      primaryFailure: {
+        format: "JSON2_S",
+        reason: "http_status",
+        code: "failed_ncbi"
+      }
+    });
+  });
+
+  it("falls back to XML when JSON2_S response is malformed JSON", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("not json", { status: 200 }))
+      .mockResolvedValueOnce(new Response("<BlastOutput></BlastOutput>", { status: 200 }));
+
+    const result = await downloadBlastResultWithFallback("RID123", fetcher as typeof fetch);
+
+    expect(result.format).toBe("XML");
+    expect(result.fallback?.primaryFailure).toMatchObject({
+      format: "JSON2_S",
+      reason: "parse_failed",
+      code: "failed_parse"
+    });
+  });
+
+  it("classifies empty JSON2_S response before XML fallback", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("   ", { status: 200 }))
+      .mockResolvedValueOnce(new Response("<BlastOutput></BlastOutput>", { status: 200 }));
+
+    const result = await downloadBlastResultWithFallback("RID123", fetcher as typeof fetch);
+
+    expect(result.format).toBe("XML");
+    expect(result.fallback?.primaryFailure).toMatchObject({
+      reason: "empty_response",
+      code: "failed_parse"
+    });
+  });
+
+  it("preserves both JSON2_S and XML failures when fallback also fails", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("RAW_BLAST_RESULT_TEXT", { status: 200 }))
+      .mockRejectedValueOnce(new TypeError("Network unavailable"));
+    let capturedError: unknown;
+
+    try {
+      await downloadBlastResultWithFallback("RID123", fetcher as typeof fetch);
+    } catch (error) {
+      capturedError = error;
+    }
+
+    expect(capturedError).toMatchObject({
+      code: "failed_network",
+      fallback: {
+        status: "fallback_failed",
+        primaryFailure: {
+          format: "JSON2_S",
+          reason: "parse_failed",
+          code: "failed_parse"
+        },
+        fallbackFailure: {
+          format: "XML",
+          reason: "network_or_cors",
+          code: "failed_network"
+        }
+      }
+    });
+    expect(capturedError instanceof Error ? capturedError.message : String(capturedError)).not.toContain("RAW_BLAST_RESULT_TEXT");
   });
 
   it("rejects result download when RID is empty", async () => {
