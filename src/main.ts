@@ -2,7 +2,9 @@ import "./styles.css";
 import { APP_NAME, BLAST_DEFAULTS, FILTER_DEFAULTS } from "./config/defaults";
 import { parseBlastResultSkeleton, type BlastParseResult } from "./domain/blastResultParser";
 import {
+  applyDefaultCollectionPreset,
   applySup12CompatibilityPreset,
+  DEFAULT_COLLECTION_PRESET,
   isDefaultCollectionPresetActive,
   isSup12CompatibilityPresetActive,
   SUP12_COMPATIBILITY_PRESET
@@ -104,13 +106,13 @@ function render(focusToRestore?: { id: string; start: number | null; end: number
       <header class="topbar">
         <div>
           <h1>${APP_NAME}</h1>
-          <p>입력한 DNA sequence를 지정 taxid 안에서 BLAST하여 aligned hit FASTA를 수집하기 위한 정적 웹앱입니다.</p>
+          <p>입력한 DNA/RNA sequence를 지정 taxid 안에서 BLAST하여 aligned hit FASTA를 수집하기 위한 정적 웹앱입니다.</p>
         </div>
         <div class="phase-badge">Phase 8 · SUP12 comparison</div>
       </header>
 
       <section class="notice-strip">
-        <strong>중요:</strong> NCBI BLAST 제출 버튼을 누르면 입력한 target/reference DNA sequence가 NCBI BLAST URL API로 전송됩니다. 화면과 상태 로그에는 전체 sequence를 표시하지 않고 length/hash/masked preview만 표시합니다.
+        <strong>중요:</strong> NCBI BLAST 제출 버튼을 누르면 입력한 target/reference sequence가 NCBI BLAST URL API로 전송됩니다. RNA U와 GenBank/NCBI 표시 형식은 정리된 DNA FASTA로 변환됩니다. 화면과 상태 로그에는 전체 sequence를 표시하지 않고 length/hash/masked preview만 표시합니다.
       </section>
 
       <section class="notice-strip muted">
@@ -135,13 +137,13 @@ function render(focusToRestore?: { id: string; start: number | null; end: number
               <div class="hint">Organism name이 아니라 숫자 taxid만 입력합니다. 예: <code>10244</code></div>
             </div>
             <div class="field full">
-              <label for="referenceSequence">Target / reference DNA sequence</label>
-              <textarea id="referenceSequence" placeholder="FASTA 또는 raw DNA sequence를 붙여 넣으세요. 실제 분석 sequence는 repository에 저장하지 않습니다.">${escapeHtml(
+              <label for="referenceSequence">Target / reference DNA/RNA sequence</label>
+              <textarea id="referenceSequence" placeholder="Raw DNA/RNA, FASTA, GenBank ORIGIN 양식, NCBI 웹 복사 서열을 붙여 넣으세요. 실제 분석 sequence는 repository에 저장하지 않습니다.">${escapeHtml(
                 state.referenceSequence
               )}</textarea>
               <div class="textarea-actions">
                 <button class="secondary-button compact" id="clearReferenceSequence" type="button" ${state.referenceSequence && !job.isBusy ? "" : "disabled"}>입력창 비우기</button>
-                <span class="hint">NCBI 웹에서 복사한 줄번호, 공백, 줄바꿈은 BLAST 제출 전에 자동 제거됩니다.</span>
+                <span class="hint">NCBI 줄번호/공백, GenBank ORIGIN 표기, RNA U는 BLAST 제출 전에 자동 정리됩니다.</span>
               </div>
               <div class="hint">이 값은 버튼을 누를 때 NCBI로 전송됩니다. public repository에는 저장하지 마세요.</div>
             </div>
@@ -161,14 +163,15 @@ function render(focusToRestore?: { id: string; start: number | null; end: number
             </div>
             <div class="preset-card">
               <div>
-                <strong>${escapeHtml(SUP12_COMPATIBILITY_PRESET.label)}</strong>
-                <span>${escapeHtml(SUP12_COMPATIBILITY_PRESET.description)}</span>
+                <strong>Collection settings</strong>
+                <span>Default setting과 SUP12 setting 중 하나를 먼저 적용한 뒤, 아래 옵션을 필요에 맞게 수정할 수 있습니다.</span>
               </div>
               <div class="preset-actions">
                 <span class="preset-state ${sup12PresetActive ? "active" : defaultPresetActive ? "default" : ""}">
-                  ${sup12PresetActive ? "SUP12 preset active" : defaultPresetActive ? "Default settings active" : "Custom settings"}
+                  ${sup12PresetActive ? "SUP12 setting active" : defaultPresetActive ? "Default setting active" : "Custom settings"}
                 </span>
-                <button class="secondary-button compact" id="applySup12Preset" ${job.isBusy ? "disabled" : ""}>Apply SUP12 preset</button>
+                <button class="secondary-button compact" id="applyDefaultPreset" title="${escapeHtml(DEFAULT_COLLECTION_PRESET.description)}" ${job.isBusy ? "disabled" : ""}>Default setting</button>
+                <button class="secondary-button compact" id="applySup12Preset" title="${escapeHtml(SUP12_COMPATIBILITY_PRESET.description)}" ${job.isBusy ? "disabled" : ""}>SUP12 setting</button>
               </div>
             </div>
             <div class="form-grid">
@@ -384,6 +387,9 @@ function bindEvents(): void {
   document.querySelector("#downloadZip")?.addEventListener("click", () => {
     void handleDownloadZip();
   });
+  document.querySelector("#applyDefaultPreset")?.addEventListener("click", () => {
+    handleApplyDefaultPreset();
+  });
   document.querySelector("#applySup12Preset")?.addEventListener("click", () => {
     handleApplySup12Preset();
   });
@@ -413,6 +419,18 @@ function handleClearReferenceSequence(): void {
   refreshOutputBundle();
   persistSnapshot();
   render({ id: "referenceSequence", start: 0, end: 0 });
+}
+
+function handleApplyDefaultPreset(): void {
+  if (job.isBusy) return;
+  state = applyDefaultCollectionPreset(state);
+  refreshOutputBundle();
+  job = {
+    ...job,
+    logs: appendLog(job.logs, "Default setting applied. maxHits=20000, length=90-500%, keywords=synthetic|construct|predicted|unverified, ambiguousN=exclude")
+  };
+  persistSnapshot();
+  render();
 }
 
 function handleApplySup12Preset(): void {

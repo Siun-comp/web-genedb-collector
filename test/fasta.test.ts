@@ -15,6 +15,29 @@ describe("fasta utilities", () => {
     expect(cleanSequence(copiedFromNcbi)).toBe("AGCGAAAGCAGGTAGATATTCTCTATCGTCCCGTCAGGCC");
   });
 
+  it("converts RNA U bases to DNA T bases before downstream use", () => {
+    const summary = summarizeSequence("augc uunn");
+
+    expect(cleanSequence("augc uunn")).toBe("ATGCTTNN");
+    expect(summary.cleanedLength).toBe(8);
+    expect(summary.uCount).toBe(3);
+    expect(summary.fasta).toContain("ATGCTTNN");
+    expect(hashSequence("AUGC")).toBe(hashSequence("ATGC"));
+  });
+
+  it("extracts GenBank ORIGIN sequence and ignores annotation text", () => {
+    const genBankText = `LOCUS       SYNTHETIC        12 bp    DNA
+DEFINITION  Synthetic minimized record.
+FEATURES             Location/Qualifiers
+ORIGIN
+        1 atgc ttaa
+       61 ccgg
+//
+`;
+
+    expect(cleanSequence(genBankText)).toBe("ATGCTTAACCGG");
+  });
+
   it("summarizes sequence length, N count, invalid characters, and FASTA output", () => {
     const summary = summarizeSequence(">target\nATGCNNX");
     expect(summary.cleanedLength).toBe(7);

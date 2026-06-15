@@ -61,6 +61,33 @@ describe("collection form validation", () => {
     expect(result.errors.some((message) => message.field === "wordSize")).toBe(false);
   });
 
+  it("accepts RNA input and reports U to T conversion as information", () => {
+    const result = validateCollectionForm({ ...validState, referenceSequence: "augcuunnaugcuunn" });
+
+    expect(result.canSubmit).toBe(true);
+    expect(result.sequenceSummary.cleanedLength).toBe(16);
+    expect(result.sequenceSummary.uCount).toBe(6);
+    expect(result.infos.some((message) => message.message.includes("RNA"))).toBe(true);
+  });
+
+  it("accepts full GenBank ORIGIN records without treating labels as sequence", () => {
+    const result = validateCollectionForm({
+      ...validState,
+      referenceSequence: `LOCUS       SYNTHETIC        20 bp    DNA
+DEFINITION  Synthetic minimized record.
+FEATURES             Location/Qualifiers
+ORIGIN
+        1 atgc gtac
+       61 gcta gcta
+//
+`
+    });
+
+    expect(result.canSubmit).toBe(true);
+    expect(result.sequenceSummary.cleanedLength).toBe(16);
+    expect(result.sequenceSummary.invalidCharacters).toEqual([]);
+  });
+
   it("warns when sequence looks protein-like", () => {
     const result = validateCollectionForm({ ...validState, referenceSequence: "ATGCCCEEEEQQQPPP" });
     expect(result.warnings.some((message) => message.field === "referenceSequence")).toBe(true);

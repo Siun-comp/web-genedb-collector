@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { BLAST_DEFAULTS, FILTER_DEFAULTS } from "../src/config/defaults";
-import { applySup12CompatibilityPreset, isDefaultCollectionPresetActive, isSup12CompatibilityPresetActive } from "../src/domain/collectionPresets";
+import {
+  applyDefaultCollectionPreset,
+  applySup12CompatibilityPreset,
+  isDefaultCollectionPresetActive,
+  isSup12CompatibilityPresetActive
+} from "../src/domain/collectionPresets";
 import type { CollectionFormState } from "../src/domain/types";
 
 describe("collection presets", () => {
@@ -36,6 +41,19 @@ describe("collection presets", () => {
   it("detects the default collection preset separately", () => {
     expect(isDefaultCollectionPresetActive(baseState())).toBe(true);
     expect(isDefaultCollectionPresetActive(applySup12CompatibilityPreset(baseState()))).toBe(false);
+  });
+
+  it("applies default settings without changing target fields", () => {
+    const custom = applySup12CompatibilityPreset(baseState());
+    const applied = applyDefaultCollectionPreset(custom);
+
+    expect(applied.taskName).toBe(custom.taskName);
+    expect(applied.referenceSequence).toBe(custom.referenceSequence);
+    expect(applied.taxid).toBe(custom.taxid);
+    expect(applied.maxHits).toBe(BLAST_DEFAULTS.maxHits);
+    expect(applied.minLengthPercent).toBe(FILTER_DEFAULTS.minLengthPercent);
+    expect(applied.maxLengthPercent).toBe(FILTER_DEFAULTS.maxLengthPercent);
+    expect(isDefaultCollectionPresetActive(applied)).toBe(true);
   });
 });
 

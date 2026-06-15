@@ -1,6 +1,6 @@
 import type { SequenceSummary } from "./types";
 
-const DNA_ALLOWED = new Set(["A", "C", "G", "T", "U", "N", "R", "Y", "S", "W", "K", "M", "B", "D", "H", "V"]);
+const DNA_ALLOWED = new Set(["A", "C", "G", "T", "N", "R", "Y", "S", "W", "K", "M", "B", "D", "H", "V"]);
 const PROTEIN_HINTS = new Set(["E", "F", "I", "L", "P", "Q", "Z", "*"]);
 
 export function stripFastaHeader(input: string): string {
@@ -10,8 +10,26 @@ export function stripFastaHeader(input: string): string {
     .join("\n");
 }
 
+export function extractSequenceText(input: string): string {
+  const lines = input.split(/\r?\n/);
+  const originIndex = lines.findIndex((line) => /^\s*ORIGIN\b/i.test(line));
+  if (originIndex >= 0) {
+    const sequenceLines: string[] = [];
+    for (let index = originIndex + 1; index < lines.length; index += 1) {
+      if (/^\s*\/\//.test(lines[index])) break;
+      sequenceLines.push(lines[index]);
+    }
+    return sequenceLines.join("\n");
+  }
+  return stripFastaHeader(input);
+}
+
 export function cleanSequence(input: string): string {
-  return stripFastaHeader(input)
+  return cleanSequencePreservingU(input).replace(/U/g, "T");
+}
+
+function cleanSequencePreservingU(input: string): string {
+  return extractSequenceText(input)
     .replace(/[0-9\s]/g, "")
     .replace(/-/g, "")
     .toUpperCase();
@@ -19,10 +37,11 @@ export function cleanSequence(input: string): string {
 
 export function summarizeSequence(input: string): SequenceSummary {
   const cleaned = cleanSequence(input);
+  const cleanedBeforeRnaConversion = cleanSequencePreservingU(input);
   const invalidCharacters = Array.from(new Set(cleaned.split("").filter((char) => !DNA_ALLOWED.has(char)))).sort();
   const nCount = cleaned.split("").filter((char) => char === "N").length;
-  const uCount = cleaned.split("").filter((char) => char === "U").length;
-  const ambiguousIupacCount = cleaned.split("").filter((char) => DNA_ALLOWED.has(char) && !["A", "C", "G", "T", "U", "N"].includes(char)).length;
+  const uCount = cleanedBeforeRnaConversion.split("").filter((char) => char === "U").length;
+  const ambiguousIupacCount = cleaned.split("").filter((char) => DNA_ALLOWED.has(char) && !["A", "C", "G", "T", "N"].includes(char)).length;
   const gcCount = cleaned.split("").filter((char) => char === "G" || char === "C").length;
   const gcPercent = cleaned.length > 0 ? Math.round((gcCount / cleaned.length) * 1000) / 10 : null;
   const proteinHintCount = cleaned.split("").filter((char) => PROTEIN_HINTS.has(char)).length;

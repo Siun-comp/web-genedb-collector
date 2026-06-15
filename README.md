@@ -48,13 +48,15 @@ IndexedDB is only a recovery aid. It does not store raw query sequence or raw BL
 
 ## Sequence Input Cleaning
 
-The target/reference sequence box accepts raw DNA, FASTA, and NCBI web sequence display text copied with position numbers and spacing.
+The target/reference sequence box accepts raw DNA/RNA, FASTA, GenBank `ORIGIN` records, and NCBI web sequence display text copied with position numbers and spacing.
 
 Before validation, preview hashing, BLAST submit, and output length filtering, the app:
 
+- extracts the sequence body from GenBank `ORIGIN ... //` records
 - removes FASTA header lines
 - removes whitespace, line breaks, and position digits
 - removes gap characters `-`
+- converts RNA `U` to DNA `T`
 - converts bases to uppercase
 
 Use `입력창 비우기` to clear only the sequence box. Taxid and collection options are preserved.

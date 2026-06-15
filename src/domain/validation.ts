@@ -33,7 +33,7 @@ export function validateCollectionForm(state: CollectionFormState): ValidationRe
         error(
           "referenceSequence",
           `DNA/IUPAC 코드가 아닌 문자가 포함되어 있습니다: ${sequence.invalidCharacters.join(", ")}`,
-          "염기서열에는 A, C, G, T, U, N 및 표준 IUPAC ambiguity 코드만 남기세요."
+          "염기서열에는 A, C, G, T, N 및 표준 IUPAC ambiguity 코드만 남기세요. RNA U는 T로 자동 변환됩니다."
         )
       );
     }
@@ -57,7 +57,7 @@ export function validateCollectionForm(state: CollectionFormState): ValidationRe
     }
     if (sequence.uCount > 0) {
       messages.push(
-        warning("referenceSequence", "U가 포함되어 RNA 서열처럼 보일 수 있습니다.", "DNA BLAST 대상이면 U를 T로 바꿀지 확인하세요.")
+        info("referenceSequence", "U가 포함되어 RNA 서열처럼 보입니다.", "BLAST 제출 전 U는 T로 자동 변환됩니다.")
       );
     }
     if (sequence.nCount > 0 && state.excludeAmbiguousN) {

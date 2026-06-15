@@ -75,6 +75,28 @@ describe("blast client helpers", () => {
     expect(safePreview.query.hash).toBe(plainSafePreview.query.hash);
   });
 
+  it("builds QUERY from RNA by converting U to T", () => {
+    const preview = buildBlastRequestPreview({ ...state, referenceSequence: "augc uunn" });
+
+    expect(preview.params.QUERY).toContain("ATGCTTNN");
+    expect(preview.params.QUERY).not.toContain("U");
+  });
+
+  it("builds QUERY from GenBank ORIGIN records without annotation labels", () => {
+    const genBankText = `LOCUS       SYNTHETIC        12 bp    DNA
+FEATURES             Location/Qualifiers
+ORIGIN
+        1 atgc ttaa
+       61 ccgg
+//
+`;
+    const preview = buildBlastRequestPreview({ ...state, referenceSequence: genBankText });
+
+    expect(preview.params.QUERY.replace(/^>Reference_Seq\s*/, "").replace(/\s/g, "")).toBe("ATGCTTAACCGG");
+    expect(preview.params.QUERY).not.toContain("LOCUS");
+    expect(preview.params.QUERY).not.toContain("ORIGIN");
+  });
+
   it("parses RID and RTOE from NCBI response text", () => {
     const parsed = parseRidAndRtoe("RID = ABC123\nRTOE = 45\n");
     expect(parsed).toEqual({ rid: "ABC123", rtoeSeconds: 45 });

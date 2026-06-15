@@ -21,6 +21,42 @@ export const SUP12_COMPATIBILITY_PRESET = {
   }
 } as const;
 
+export const DEFAULT_COLLECTION_PRESET = {
+  id: "default-collection",
+  label: "Default setting",
+  description: "Use the standard Web GeneDB settings: maxHits 20000, length 90-500%, current default filters.",
+  values: {
+    database: BLAST_DEFAULTS.database,
+    task: BLAST_DEFAULTS.task,
+    maxHits: BLAST_DEFAULTS.maxHits,
+    expect: BLAST_DEFAULTS.expect,
+    wordSize: BLAST_DEFAULTS.wordSize,
+    lengthFilterEnabled: FILTER_DEFAULTS.lengthFilterEnabled,
+    minLengthPercent: FILTER_DEFAULTS.minLengthPercent,
+    maxLengthPercent: FILTER_DEFAULTS.maxLengthPercent,
+    keywordFilterEnabled: FILTER_DEFAULTS.keywordFilterEnabled,
+    keywords: FILTER_DEFAULTS.keywords,
+    excludeAmbiguousN: FILTER_DEFAULTS.excludeAmbiguousN
+  }
+} as const;
+
+export function applyDefaultCollectionPreset(state: CollectionFormState): CollectionFormState {
+  return {
+    ...state,
+    database: DEFAULT_COLLECTION_PRESET.values.database,
+    task: DEFAULT_COLLECTION_PRESET.values.task,
+    maxHits: DEFAULT_COLLECTION_PRESET.values.maxHits,
+    expect: DEFAULT_COLLECTION_PRESET.values.expect,
+    wordSize: DEFAULT_COLLECTION_PRESET.values.wordSize,
+    lengthFilterEnabled: DEFAULT_COLLECTION_PRESET.values.lengthFilterEnabled,
+    minLengthPercent: DEFAULT_COLLECTION_PRESET.values.minLengthPercent,
+    maxLengthPercent: DEFAULT_COLLECTION_PRESET.values.maxLengthPercent,
+    keywordFilterEnabled: DEFAULT_COLLECTION_PRESET.values.keywordFilterEnabled,
+    keywords: DEFAULT_COLLECTION_PRESET.values.keywords.join(", "),
+    excludeAmbiguousN: DEFAULT_COLLECTION_PRESET.values.excludeAmbiguousN
+  };
+}
+
 export function applySup12CompatibilityPreset(state: CollectionFormState): CollectionFormState {
   return {
     ...state,
