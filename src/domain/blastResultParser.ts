@@ -38,6 +38,23 @@ export interface BlastParseDiagnostics {
   resultSequenceNormalization?: ResultSequenceNormalizationSummary;
 }
 
+export type BlastParseProgressStage = "json_hits_discovered" | "parsing_hits" | "complete";
+
+export interface BlastParseProgress {
+  stage: BlastParseProgressStage;
+  processedHits: number;
+  totalHits?: number;
+  records: number;
+  dropped: number;
+  completeHitBlocksSeen: number;
+  partialXmlTail: boolean;
+}
+
+export interface BlastParseOptions {
+  progressIntervalHits?: number;
+  onProgress?: (progress: BlastParseProgress) => void;
+}
+
 export type ResultSequenceOutputMode = "u_to_t";
 
 export interface ParsedHspSequenceNormalization {
@@ -60,11 +77,20 @@ interface NormalizedParsedHspSequence {
   invalidCharacters: string[];
 }
 
-export function parseBlastResultSkeleton(text: string, format: BlastResultFormat): BlastParseResult {
-  return format === "JSON2_S" ? parseJson2Skeleton(text, format) : parseXmlSkeleton(text, format);
+export function parseBlastResultSkeleton(text: string, format: BlastResultFormat, options: BlastParseOptions = {}): BlastParseResult {
+  const result = format === "JSON2_S" ? parseJson2Skeleton(text, format, options) : parseXmlSkeleton(text, format, options);
+  emitProgress(options, {
+    stage: "complete",
+    processedHits: result.records.length + result.dropped.length,
+    records: result.records.length,
+    dropped: result.dropped.length,
+    completeHitBlocksSeen: result.diagnostics?.completeHitBlocksSeen ?? 0,
+    partialXmlTail: result.diagnostics?.partialXmlTail ?? false
+  });
+  return result;
 }
 
-function parseJson2Skeleton(text: string, format: BlastResultFormat): BlastParseResult {
+function parseJson2Skeleton(text: string, format: BlastResultFormat, options: BlastParseOptions): BlastParseResult {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -75,8 +101,17 @@ function parseJson2Skeleton(text: string, format: BlastResultFormat): BlastParse
   const hitObjects = findObjectsWithArrayKey(parsed, "hsps");
   const records: ParsedHsp[] = [];
   const dropped: DroppedHit[] = [];
+  emitProgress(options, {
+    stage: "json_hits_discovered",
+    processedHits: 0,
+    totalHits: hitObjects.length,
+    records: 0,
+    dropped: 0,
+    completeHitBlocksSeen: 0,
+    partialXmlTail: false
+  });
 
-  for (const hit of hitObjects) {
+  for (const [index, hit] of hitObjects.entries()) {
     const title = readJsonTitle(hit);
     const accession = readJsonAccession(hit);
     const hsps = Array.isArray(hit.hsps) ? hit.hsps : [];
@@ -87,12 +122,21 @@ function parseJson2Skeleton(text: string, format: BlastResultFormat): BlastParse
     } else {
       dropped.push({ accession, title, reason: "No usable first HSP sequence" });
     }
+    maybeEmitProgress(options, {
+      stage: "parsing_hits",
+      processedHits: index + 1,
+      totalHits: hitObjects.length,
+      records: records.length,
+      dropped: dropped.length,
+      completeHitBlocksSeen: 0,
+      partialXmlTail: false
+    });
   }
 
   return buildResult(format, records, dropped, [`Parsed JSON2_S skeleton: hits=${hitObjects.length}, records=${records.length}`]);
 }
 
-function parseXmlSkeleton(text: string, format: BlastResultFormat): BlastParseResult {
+function parseXmlSkeleton(text: string, format: BlastResultFormat, options: BlastParseOptions): BlastParseResult {
   const trimmed = text.trim();
   if (!trimmed.startsWith("<")) {
     return emptyResult(format, "XML parse failed: response does not look like XML", {
@@ -122,6 +166,14 @@ function parseXmlSkeleton(text: string, format: BlastResultFormat): BlastParseRe
     } else {
       dropped.push({ accession, title, reason: "No usable first HSP sequence" });
     }
+    maybeEmitProgress(options, {
+      stage: "parsing_hits",
+      processedHits: completeHitBlocksSeen,
+      records: records.length,
+      dropped: dropped.length,
+      completeHitBlocksSeen,
+      partialXmlTail
+    });
   }
 
   if (partialXmlTail) {
@@ -367,6 +419,17 @@ function summarizeResultSequenceNormalization(records: ParsedHsp[]): ResultSeque
 
 function countMatches(value: string, target: string): number {
   return [...value].filter((char) => char === target).length;
+}
+
+function maybeEmitProgress(options: BlastParseOptions, progress: BlastParseProgress): void {
+  const interval = Math.max(1, Math.floor(options.progressIntervalHits ?? 1000));
+  if (progress.processedHits === 0 || progress.processedHits % interval === 0) {
+    emitProgress(options, progress);
+  }
+}
+
+function emitProgress(options: BlastParseOptions, progress: BlastParseProgress): void {
+  options.onProgress?.(progress);
 }
 
 function uniqueCharacters(value: string): string[] {

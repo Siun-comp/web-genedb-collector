@@ -1,6 +1,6 @@
 import "./styles.css";
 import { APP_NAME, BLAST_DEFAULTS, FILTER_DEFAULTS } from "./config/defaults";
-import { parseBlastResultSkeleton, type BlastParseResult } from "./domain/blastResultParser";
+import type { BlastParseResult } from "./domain/blastResultParser";
 import {
   applyDefaultCollectionPreset,
   applySup12CompatibilityPreset,
@@ -36,6 +36,7 @@ import {
   type PersistedJobSnapshot,
   type StoredQuerySummary
 } from "./services/storage";
+import { BlastParserWorkerError, parseBlastResultInWorker, type ParserWorkerProgress } from "./services/blastParserWorkerClient";
 import {
   GeneDbZipDegradationError,
   buildZipManifest,
@@ -85,6 +86,7 @@ interface RuntimeJob {
   detail: string;
   action: string;
   logs: string[];
+  parseProgress?: ParserWorkerProgress;
   parseResult?: BlastParseResult;
   outputBundle?: GeneDbOutputBundle;
   resultFormat?: string;
@@ -312,7 +314,7 @@ function render(focusToRestore?: { id: string; start: number | null; end: number
 
           <section class="panel">
             <h2>Parser skeleton</h2>
-            ${renderParseResult(job.parseResult)}
+            ${renderParseResult(job.parseResult, job.parseProgress)}
           </section>
 
           <section class="panel">
@@ -363,7 +365,7 @@ function render(focusToRestore?: { id: string; start: number | null; end: number
               ${step("입력 검증", validation.canSubmit)}
               ${step("NCBI submit / RID 발급", Boolean(job.rid))}
               ${step("RID SearchInfo polling", job.status === "waiting" || job.status === "ready" || job.status === "no_hits" || job.status === "downloading" || job.status === "parsing" || job.status === "generatingZip" || job.status === "done")}
-              ${step("BLAST result download", Boolean(job.parseResult))}
+              ${step("BLAST result download", Boolean(job.resultDownloadedAt) || Boolean(job.parseResult))}
               ${step("Parser skeleton", Boolean(job.parseResult))}
               ${step("FASTA / ZIP 생성", Boolean(job.outputBundle))}
             </ol>
@@ -638,20 +640,53 @@ async function downloadReadyResult(): Promise<void> {
 
   try {
     const result = await downloadBlastResultWithFallback(rid, fetch, { hitlistSize: state.maxHits, ncbiGi: true });
-    const parseResult = parseBlastResultSkeleton(result.text, result.format);
     const resultDownloadedAt = Date.parse(result.downloadedAt);
     const logsBeforeOutput = result.fallback?.status === "fallback_succeeded" ? appendLog(job.logs, formatJson2FallbackSuccess(result.fallback, result.json2FailureReason)) : job.logs;
+    const downloadLogs = appendLog(logsBeforeOutput, `Result downloaded. rid=${rid}, format=${result.format}, responseLength=${result.rawLength}, parser=worker`);
+
+    job = {
+      ...job,
+      status: "parsing",
+      isBusy: true,
+      resultFormat: result.format,
+      resultDownloadedAt,
+      resultRawLength: result.rawLength,
+      resultFallback: result.fallback,
+      parseProgress: undefined,
+      title: "BLAST result parsing",
+      detail: `Worker parsing started. format=${result.format}, responseLength=${result.rawLength.toLocaleString()} chars.`,
+      action: "Progress shows counts only. Raw BLAST result and full query sequence are not displayed or stored.",
+      logs: downloadLogs
+    };
+    render();
+
+    const parseResult = await parseBlastResultInWorker(result.text, result.format, {
+      progressIntervalHits: 1000,
+      onProgress: (progress) => {
+        job = {
+          ...job,
+          parseProgress: progress,
+          detail: formatParserProgress(progress),
+          action: "Worker parsing is running in the background. Counts may update in batches."
+        };
+        render();
+      }
+    });
+    const parseLogs = appendLog(
+      job.logs,
+      `Parser worker completed. format=${result.format}, records=${parseResult.records.length}, dropped=${parseResult.dropped.length}, completeHitBlocks=${parseResult.diagnostics?.completeHitBlocksSeen ?? "unknown"}, partialXmlTail=${Boolean(parseResult.diagnostics?.partialXmlTail)}, elapsedMs=${job.parseProgress?.elapsedMs ?? "unknown"}`
+    );
     const outputBundle = buildGeneDbOutputBundle(state, parseResult, {
       rid,
       resultFormat: result.format,
       resultDownloadedAt,
       resultRawLength: result.rawLength,
       resultFallback: result.fallback,
-      processLogs: logsBeforeOutput
+      processLogs: parseLogs
     });
     const zipEstimate = estimateGeneDbZipSize(outputBundle);
     const logsWithEstimate = appendLog(
-      logsBeforeOutput,
+      parseLogs,
       `ZIP estimate. uncompressedBytes=${zipEstimate.totalUncompressedBytes}, recordsJsonlBytes=${zipEstimate.recordsJsonlBytes}, risk=${zipEstimate.riskLevel}, omitProvenanceRecommended=${zipEstimate.omitProvenanceRecommended}`
     );
     const completeHitBlocks = parseResult.diagnostics?.completeHitBlocksSeen;
@@ -666,6 +701,7 @@ async function downloadReadyResult(): Promise<void> {
       resultDownloadedAt,
       resultRawLength: result.rawLength,
       resultFallback: result.fallback,
+      parseProgress: job.parseProgress,
       title: "FASTA / ZIP 준비 완료",
       detail: `Aligned=${outputBundle.summary.savedCount}, N 분리=${outputBundle.summary.ambiguousCount}, 제외=${outputBundle.summary.droppedCount}.`,
       action: "결과를 확인한 뒤 ZIP 다운로드를 누르세요.",
@@ -828,7 +864,7 @@ async function initializeApp(): Promise<void> {
 
 function jobFromSnapshot(snapshot: PersistedJobSnapshot): RuntimeJob {
   return {
-    status: snapshot.status === "submitting" || snapshot.status === "downloading" || snapshot.status === "generatingZip" ? "waiting" : snapshot.status,
+    status: snapshot.status === "submitting" || snapshot.status === "downloading" || snapshot.status === "parsing" || snapshot.status === "generatingZip" ? "waiting" : snapshot.status,
     rid: snapshot.rid,
     rtoeSeconds: snapshot.rtoeSeconds,
     lastSearchStatus: snapshot.lastSearchStatus,
@@ -914,7 +950,7 @@ function canManualPoll(): boolean {
 }
 
 function errorJob(error: unknown, previousLogs: string[]): RuntimeJob {
-  const code = error instanceof BlastClientError ? error.code : "failed_network";
+  const code = error instanceof BlastParserWorkerError ? error.code : error instanceof BlastClientError ? error.code : "failed_network";
   const message = error instanceof Error ? error.message : "알 수 없는 오류가 발생했습니다.";
   let logs = appendLog(previousLogs, `Error ${code}: ${message}`);
   if (error instanceof BlastClientError && error.fallback?.status === "fallback_failed") {
@@ -1026,8 +1062,22 @@ function renderLog(logs: string[]): string {
     return `<ol class="process-log">${logs.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ol>`;
 }
 
-function renderParseResult(parseResult?: BlastParseResult): string {
+function renderParseResult(parseResult?: BlastParseResult, progress?: ParserWorkerProgress): string {
   if (!parseResult) {
+    if (progress) {
+      return `
+        <div class="status-box">
+          ${statusLine("Parser mode", "Web Worker")}
+          ${statusLine("Stage", progress.stage)}
+          ${statusLine("Processed hits", progress.processedHits.toLocaleString())}
+          ${statusLine("Parsed records", progress.records.toLocaleString())}
+          ${statusLine("Dropped hits", progress.dropped.toLocaleString())}
+          ${statusLine("Complete Hit blocks", progress.completeHitBlocksSeen.toLocaleString())}
+          ${statusLine("Partial XML tail", progress.partialXmlTail ? "yes" : "no")}
+          ${statusLine("Elapsed", formatElapsed(progress.elapsedMs))}
+        </div>
+      `;
+    }
     return `<div class="empty-state">SearchInfo가 READY + hits 상태가 되면 BLAST result 구조 요약이 표시됩니다.</div>`;
   }
 
@@ -1048,6 +1098,7 @@ function renderParseResult(parseResult?: BlastParseResult): string {
   return `
     ${partialXmlNotice}
     <div class="status-box">
+      ${statusLine("Parser mode", "Web Worker")}
       ${statusLine("Format", parseResult.format)}
       ${statusLine("Parsed records", parseResult.records.length.toLocaleString())}
       ${statusLine("Dropped hits", parseResult.dropped.length.toLocaleString())}
@@ -1169,6 +1220,16 @@ function formatFallbackStatus(fallback?: BlastResultFallback): string {
     return `JSON2_S failed, XML fallback succeeded${reason}`;
   }
   return "JSON2_S failed, XML fallback failed";
+}
+
+function formatParserProgress(progress: ParserWorkerProgress): string {
+  const total = progress.totalHits === undefined ? "" : `/${progress.totalHits.toLocaleString()}`;
+  return `Worker parsing ${progress.format}. stage=${progress.stage}, processed=${progress.processedHits.toLocaleString()}${total}, records=${progress.records.toLocaleString()}, dropped=${progress.dropped.toLocaleString()}, completeHitBlocks=${progress.completeHitBlocksSeen.toLocaleString()}, elapsed=${formatElapsed(progress.elapsedMs)}.`;
+}
+
+function formatElapsed(ms: number): string {
+  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${ms}ms`;
 }
 
 function formatZipEstimate(estimate: ZipSizeEstimate): string {

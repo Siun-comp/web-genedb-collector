@@ -61,6 +61,29 @@ Phase 9D ZIP risk controls를 구현했다.
 - `npm run build` 통과
 - 로컬 브라우저 smoke check 통과
 
+## 2026-06-15 Phase 9E 완료 상태
+
+Phase 9E Worker-based large parser를 구현했다.
+
+- 기존 `parseBlastResultSkeleton()` parser semantics를 유지하고 count-only progress callback을 추가했다.
+- `blastParser.worker.ts`는 실제 BLAST result parser Worker로 동작한다.
+- Worker response는 `started`, `progress`, `complete`, `error`로 구분하고 `requestId`를 사용한다.
+- main UI는 download 후 `parsing` 상태로 전환하고 Worker progress를 표시한다.
+- progress에는 raw BLAST result나 full query sequence를 넣지 않고 count/status만 담는다.
+- Worker complete 결과는 기존 `BlastParseResult` shape이며, 이후 Phase 9C/9D output bundle과 ZIP degradation 흐름을 그대로 사용한다.
+- synthetic large XML generator 기반 10,000 Hit Worker contract 테스트를 추가했다.
+
+검증:
+
+- `npm run typecheck` 통과
+- `npm test` 통과, 10 files / 96 tests
+- `npm run build` 통과
+
+한계:
+
+- Worker로 raw result string을 넘기는 구조라 일시적 memory copy는 남는다.
+- streaming/chunked retrieval과 incremental XML parser는 Phase 9F에서 별도 검토한다.
+
 ## 1. 현재 상태 요약
 
 이미 구현된 것:
@@ -81,10 +104,11 @@ Phase 9D ZIP risk controls를 구현했다.
 - `partialXmlTail=true`, `completeHitBlocksSeen`을 UI/log/meta에 남긴다.
 - SUP12 setting과 Default setting을 버튼으로 전환할 수 있다.
 - ZIP 생성 전 size/risk estimate를 표시하고, full provenance ZIP 실패 시 summary-only ZIP으로 회수한다.
+- BLAST result parsing은 Web Worker에서 수행하고 count-only progress를 UI에 표시한다.
 
 남은 문제:
 
-- 대용량 result는 main thread에서 raw text -> parse -> records -> metadata -> ZIP을 만드는 과정에서 메모리 압박이 크다.
+- 대용량 result는 raw text download와 Worker postMessage 단계에서 여전히 메모리 압박이 생길 수 있다.
 - ZIP 생성 단계의 records.jsonl 부담은 줄였지만, 큰 FASTA 문자열과 parser record 배열 자체의 메모리 부담은 여전히 남아 있다.
 - 100,000 hit 요청은 보장값이 아니며, serverless browser app에서 완전 회수를 보장할 방법은 없다.
 
@@ -301,7 +325,7 @@ FASTA sequence 자체는 JSONL에 넣지 않는다.
 - 대용량 provenance 때문에 ZIP이 실패해도 aligned FASTA와 summary meta를 받을 수 있는 fallback 경로가 있다.
 - process.log와 UI는 어떤 파일이 생략되었는지 명확히 표시한다.
 
-### Phase 9E. Worker-based large parser
+### Phase 9E. Worker-based large parser 완료
 
 작업:
 
@@ -311,7 +335,7 @@ FASTA sequence 자체는 JSONL에 넣지 않는다.
 - cancellation hook 검토
 - synthetic large XML fixture generator 추가
 
-완료 기준:
+완료 결과:
 
 - parser가 UI thread를 장시간 막지 않는다.
 - 10k+ synthetic hit block 테스트를 통과한다.

@@ -123,6 +123,8 @@ web-genedb-collector/docs/LARGE_RESULT_STABILITY_PLAN.md를 기준으로 Phase 9
 
 ## Phase 9E Prompt: Worker Parser For Large Results
 
+상태: 완료. 구현 기준은 기존 parser semantics 유지, Web Worker transport, requestId guard, count-only progress, generated 10k synthetic XML Worker contract test다.
+
 ```text
 web-genedb-collector/docs/LARGE_RESULT_STABILITY_PLAN.md를 기준으로 Phase 9E를 구현하라.
 
@@ -156,6 +158,7 @@ web-genedb-collector/docs/LARGE_RESULT_STABILITY_PLAN.md를 기준으로 Phase 9
 구현:
 - downloadBlastResultStream prototype을 추가하라.
 - CORS 또는 브라우저 제약으로 stream body를 사용할 수 없으면 기존 text fallback으로 돌아가라.
+- Phase 9E의 Worker parser와 count-only progress UI를 유지하라.
 - large result mode에서 XML 계열 streaming을 우선 시도하는 옵션을 추가하라.
 - streaming mode/text fallback mode를 UI/log/meta에 표시하라.
 
