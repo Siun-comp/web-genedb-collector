@@ -59,6 +59,22 @@ describe("blast client helpers", () => {
     expect(safePreview.query.hash).toMatch(/^fnv1a32:[a-f0-9]{8}$/);
   });
 
+  it("builds QUERY from cleaned NCBI-style numbered sequence text", () => {
+    const ncbiStyle = `1 atgc gtac
+61 gcta gcta`;
+    const plain = "ATGCGTACGCTAGCTA";
+    const preview = buildBlastRequestPreview({ ...state, referenceSequence: ncbiStyle });
+    const safePreview = buildSafeBlastRequestPreview({ ...state, referenceSequence: ncbiStyle });
+    const plainSafePreview = buildSafeBlastRequestPreview({ ...state, referenceSequence: plain });
+
+    expect(preview.params.QUERY.replace(/^>Reference_Seq\s*/, "").replace(/\s/g, "")).toBe(plain);
+    expect(preview.params.QUERY).not.toContain("61");
+    expect(preview.params.QUERY).not.toContain("atgc gtac");
+    expect(safePreview.params.QUERY).toBeUndefined();
+    expect(safePreview.query.length).toBe(plain.length);
+    expect(safePreview.query.hash).toBe(plainSafePreview.query.hash);
+  });
+
   it("parses RID and RTOE from NCBI response text", () => {
     const parsed = parseRidAndRtoe("RID = ABC123\nRTOE = 45\n");
     expect(parsed).toEqual({ rid: "ABC123", rtoeSeconds: 45 });

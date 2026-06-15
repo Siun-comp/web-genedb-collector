@@ -6,6 +6,15 @@ describe("fasta utilities", () => {
     expect(cleanSequence(">x\nAT C-1G\nnn")).toBe("ATCGNN");
   });
 
+  it("cleans NCBI web sequence lines with position numbers and spacing", () => {
+    const copiedFromNcbi = `
+        1 agcgaaagca ggtagatatt
+       61 ctctatcgtc ccgtcaggcc
+    `;
+
+    expect(cleanSequence(copiedFromNcbi)).toBe("AGCGAAAGCAGGTAGATATTCTCTATCGTCCCGTCAGGCC");
+  });
+
   it("summarizes sequence length, N count, invalid characters, and FASTA output", () => {
     const summary = summarizeSequence(">target\nATGCNNX");
     expect(summary.cleanedLength).toBe(7);

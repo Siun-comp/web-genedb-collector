@@ -48,6 +48,19 @@ describe("collection form validation", () => {
     expect(result.errors.some((message) => message.field === "wordSize")).toBe(true);
   });
 
+  it("validates NCBI-style numbered and spaced DNA using the cleaned length", () => {
+    const result = validateCollectionForm({
+      ...validState,
+      referenceSequence: `1 atgc gtac
+61 gcta gcta`,
+      wordSize: 11
+    });
+
+    expect(result.canSubmit).toBe(true);
+    expect(result.sequenceSummary.cleanedLength).toBe(16);
+    expect(result.errors.some((message) => message.field === "wordSize")).toBe(false);
+  });
+
   it("warns when sequence looks protein-like", () => {
     const result = validateCollectionForm({ ...validState, referenceSequence: "ATGCCCEEEEQQQPPP" });
     expect(result.warnings.some((message) => message.field === "referenceSequence")).toBe(true);

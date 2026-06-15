@@ -139,6 +139,10 @@ function render(focusToRestore?: { id: string; start: number | null; end: number
               <textarea id="referenceSequence" placeholder="FASTA 또는 raw DNA sequence를 붙여 넣으세요. 실제 분석 sequence는 repository에 저장하지 않습니다.">${escapeHtml(
                 state.referenceSequence
               )}</textarea>
+              <div class="textarea-actions">
+                <button class="secondary-button compact" id="clearReferenceSequence" type="button" ${state.referenceSequence && !job.isBusy ? "" : "disabled"}>입력창 비우기</button>
+                <span class="hint">NCBI 웹에서 복사한 줄번호, 공백, 줄바꿈은 BLAST 제출 전에 자동 제거됩니다.</span>
+              </div>
               <div class="hint">이 값은 버튼을 누를 때 NCBI로 전송됩니다. public repository에는 저장하지 마세요.</div>
             </div>
           </div>
@@ -383,6 +387,9 @@ function bindEvents(): void {
   document.querySelector("#applySup12Preset")?.addEventListener("click", () => {
     handleApplySup12Preset();
   });
+  document.querySelector("#clearReferenceSequence")?.addEventListener("click", () => {
+    handleClearReferenceSequence();
+  });
   document.querySelector("#clearRecovery")?.addEventListener("click", () => {
     void handleClearRecovery();
   });
@@ -394,6 +401,18 @@ function bindEvents(): void {
     void clearJobSnapshot();
     render();
   });
+}
+
+function handleClearReferenceSequence(): void {
+  if (job.isBusy) return;
+  if (!state.referenceSequence) return;
+  state = {
+    ...state,
+    referenceSequence: ""
+  };
+  refreshOutputBundle();
+  persistSnapshot();
+  render({ id: "referenceSequence", start: 0, end: 0 });
 }
 
 function handleApplySup12Preset(): void {

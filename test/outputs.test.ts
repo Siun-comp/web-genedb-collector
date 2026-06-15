@@ -120,6 +120,17 @@ describe("output helpers", () => {
     expect(combinedSafeFiles).toContain("[redacted_query_sequence]");
     expect(combinedSafeFiles).not.toContain("RAW_BLAST_RESULT_TEXT");
   });
+
+  it("redacts accidental logs containing NCBI-style formatted query text", () => {
+    const formattedQuery = "1 AAAA CCCC\n61 GGGG TTTT";
+    const bundle = buildGeneDbOutputBundle(baseState(formattedQuery), parseResult(), {
+      ...outputContext(),
+      processLogs: [`accidental formatted query ${formattedQuery}`]
+    });
+
+    expect(bundle.processLog).not.toContain(formattedQuery);
+    expect(bundle.processLog).toContain("[redacted_query_sequence]");
+  });
 });
 
 function baseState(referenceSequence = "AAAAAAAAAA"): CollectionFormState {

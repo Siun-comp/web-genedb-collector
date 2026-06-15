@@ -292,6 +292,11 @@ function buildProcessLog(
 
 function redactSequence(value: string, referenceSequence: string): string {
   const cleaned = cleanSequence(referenceSequence);
-  if (!cleaned || cleaned.length < 8) return value;
-  return value.split(cleaned).join("[redacted_query_sequence]");
+  const raw = referenceSequence.trim();
+  let redacted = value;
+  if (raw.length >= 8) {
+    redacted = redacted.split(raw).join("[redacted_query_sequence]");
+  }
+  if (!cleaned || cleaned.length < 8) return redacted;
+  return redacted.split(cleaned).join("[redacted_query_sequence]");
 }

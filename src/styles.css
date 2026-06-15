@@ -158,6 +158,13 @@ textarea {
   line-height: 1.45;
 }
 
+.textarea-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  align-items: center;
+}
+
 .hint,
 .warning,
 .status-line {
