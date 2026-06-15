@@ -1,5 +1,32 @@
 # Large Result Stability Step Prompts
 
+## Phase 9G Prompt: Real Large-run Validation
+
+Status: completed.
+
+Observed safe validation summary:
+
+- Small public Pages run used `JSON2_S` and `text_json2_worker`.
+- Large public Pages run used XML fallback and `streaming_xml`.
+- Large run returned `partialXmlTail=true`; this must be reported as complete Hit block recovery only.
+- Codex in-app Browser could not save a ZIP file because downloads are unsupported by that browser surface. A normal-browser manual ZIP save check remains the next task.
+
+## Phase 9H Prompt: Normal Browser ZIP Save Check
+
+```text
+web-genedb-collector/docs/LARGE_RESULT_STABILITY_PLAN.md와
+web-genedb-collector/docs/PHASE_9G_VALIDATION_2026-06-16.md를 기준으로 Phase 9H validation을 수행하라.
+
+Phase 9A~9G의 RNA U->T normalization, qseq fallback warning/count, N-only ambiguous split,
+structured JSON2_S/XML fallback, partialXmlTail completeness reporting, summary meta/records.jsonl split,
+ZIP size estimate/degradation, Web Worker parser, XML streaming prototype, text Worker fallback,
+그리고 Pages validation 결과를 유지하라.
+
+목표는 일반 Chrome/Edge 브라우저에서 ZIP 다운로드 저장을 실제로 확인하는 것이다.
+보고에는 RID/status/count/file-name summary만 남기고, full query sequence, raw BLAST result,
+FASTA body, ZIP 산출물, API key, 개인정보, 회사 내부자료는 repository와 문서에 포함하지 말라.
+```
+
 ## Phase 9F Prompt: Streaming Retrieval Prototype
 
 상태: 완료. 구현 기준은 JSON2_S primary 유지, XML ReadableStream fallback, streaming 불가/실패 시 text XML + Web Worker fallback이다.

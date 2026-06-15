@@ -1,5 +1,21 @@
 # Large Result Stability Follow-up Plan
 
+## 2026-06-16 Phase 9G validation completion
+
+Phase 9G GitHub Pages validation was completed with safe summaries only.
+
+- Pages URL loaded successfully with no observed console errors.
+- Small public run: RID `306KBGGF014`, taxid `10244`, maxHits `200`, result format `JSON2_S`, acquisition mode `text_json2_worker`, aligned `194`, ambiguous `6`, dropped `0`, partialXmlTail `false`.
+- Large public run: RID `306S233T016`, taxid `11320`, maxHits `50000`, JSON2_S failed with `network_or_cors/failed_network`, XML fallback succeeded with acquisition mode `streaming_xml`, streaming status `stream_succeeded`.
+- Large run XML response length was `114,507,258`, completeHitBlocksSeen was `28,089`, aligned was `27,692`, ambiguous was `397`, dropped was `0`, and partialXmlTail was `true`.
+- `partialXmlTail=true` remains interpreted as complete Hit block recovery only, not full maxHits recovery.
+- ZIP download buttons became enabled after output preparation. Codex in-app Browser does not support file download saving, so actual file-save confirmation remains a normal-browser manual check.
+- Detailed report: `docs/PHASE_9G_VALIDATION_2026-06-16.md`
+
+Security note:
+
+- No full query sequence, raw BLAST result, FASTA body, API key, personal data, company internal material, or ZIP output was committed.
+
 ## 2026-06-16 Phase 9F prototype completion
 
 Phase 9F streaming/chunked XML retrieval prototype has been implemented.
