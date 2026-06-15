@@ -150,7 +150,7 @@ function render(focusToRestore?: { id: string; start: number | null; end: number
             <div class="form-grid">
               <div class="field">
                 <label for="maxHits">Max hits</label>
-                <input id="maxHits" type="number" min="1" max="${BLAST_DEFAULTS.maxHitsLimit}" value="${state.maxHits}" />
+                <input id="maxHits" type="text" inputmode="numeric" pattern="[0-9]*" value="${formatNumberInput(state.maxHits)}" />
                 <div class="hint">기본값 20000, 최대 입력값 100000. 요청값이며 보장값은 아닙니다.</div>
               </div>
               <div class="field">
@@ -336,7 +336,7 @@ function bindEvents(): void {
   bindInput("referenceSequence", (value) => (state.referenceSequence = value));
   bindInput("database", (value) => (state.database = value));
   bindInput("task", (value) => (state.task = value as CollectionFormState["task"]));
-  bindInput("maxHits", (value) => (state.maxHits = parseInteger(value, BLAST_DEFAULTS.maxHits)));
+  bindInput("maxHits", (value) => (state.maxHits = parseStrictInteger(value)));
   bindInput("expect", (value) => (state.expect = parseFloatNumber(value, BLAST_DEFAULTS.expect)));
   bindInput("wordSize", (value) => (state.wordSize = parseInteger(value, BLAST_DEFAULTS.wordSize)));
   bindInput("email", (value) => (state.email = value));
@@ -541,7 +541,7 @@ async function downloadReadyResult(): Promise<void> {
   render();
 
   try {
-    const result = await downloadBlastResultWithFallback(rid);
+    const result = await downloadBlastResultWithFallback(rid, fetch, { hitlistSize: state.maxHits, ncbiGi: true });
     const parseResult = parseBlastResultSkeleton(result.text, result.format);
     const resultDownloadedAt = Date.parse(result.downloadedAt);
     const outputBundle = buildGeneDbOutputBundle(state, parseResult, {
@@ -564,7 +564,7 @@ async function downloadReadyResult(): Promise<void> {
       detail: `Aligned=${outputBundle.summary.savedCount}, N 분리=${outputBundle.summary.ambiguousCount}, 제외=${outputBundle.summary.droppedCount}.`,
       action: "결과를 확인한 뒤 ZIP 다운로드를 누르세요.",
       logs: appendLog(
-        job.logs,
+        result.json2FailureReason ? appendLog(job.logs, `JSON2_S fallback reason: ${result.json2FailureReason}`) : job.logs,
         `Result downloaded and output prepared. rid=${rid}, format=${result.format}, responseLength=${result.rawLength}, aligned=${outputBundle.summary.savedCount}, ambiguous=${outputBundle.summary.ambiguousCount}, dropped=${outputBundle.summary.droppedCount}`
       )
     };
@@ -898,6 +898,8 @@ function renderParseResult(parseResult?: BlastParseResult): string {
       ${statusLine("Format", parseResult.format)}
       ${statusLine("Parsed records", parseResult.records.length.toLocaleString())}
       ${statusLine("Dropped hits", parseResult.dropped.length.toLocaleString())}
+      ${statusLine("Complete Hit blocks", parseResult.diagnostics?.completeHitBlocksSeen === undefined ? "-" : parseResult.diagnostics.completeHitBlocksSeen.toLocaleString())}
+      ${statusLine("Partial XML tail", parseResult.diagnostics?.partialXmlTail ? "yes" : "no")}
       ${statusLine("Unique sequences", parseResult.summary.uniqueCount.toLocaleString())}
       ${statusLine("Length range", `${parseResult.summary.minLength.toLocaleString()}-${parseResult.summary.maxLength.toLocaleString()} bp`)}
       ${firstRecordLines}
@@ -1001,9 +1003,19 @@ function parseInteger(value: string, fallback: number): number {
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
+function parseStrictInteger(value: string): number {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return Number.NaN;
+  return Number.parseInt(trimmed, 10);
+}
+
 function parseFloatNumber(value: string, fallback: number): number {
   const parsed = Number.parseFloat(value);
   return Number.isNaN(parsed) ? fallback : parsed;
+}
+
+function formatNumberInput(value: number): string {
+  return Number.isFinite(value) ? String(value) : "";
 }
 
 function formatTime(value: number): string {

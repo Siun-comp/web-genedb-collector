@@ -252,6 +252,7 @@ function buildMetaJson(
       excludeAmbiguousN: state.excludeAmbiguousN
     },
     counts: summary,
+    parserDiagnostics: parseResult.diagnostics ?? null,
     records,
     parserDropped: parseResult.dropped
   };
@@ -276,6 +277,8 @@ function buildProcessLog(
     `Result response length=${context.resultRawLength ?? "unknown"}`,
     `Counts saved=${summary.savedCount}, ambiguous=${summary.ambiguousCount}, dropped=${summary.droppedCount}, unique=${summary.uniqueCount}, lengthDropped=${summary.lengthDroppedCount}, keywordDropped=${summary.keywordDroppedCount}`,
     `Filters length=${state.lengthFilterEnabled ? `${state.minLengthPercent}-${state.maxLengthPercent}%` : "off"}, keyword=${state.keywordFilterEnabled ? parseKeywords(state.keywords).join("|") || "none" : "off"}, ambiguousN=${state.excludeAmbiguousN ? "exclude" : "include"}`,
+    `Parser diagnostics completeHitBlocksSeen=${parseResult.diagnostics?.completeHitBlocksSeen ?? "unknown"}, partialXmlTail=${parseResult.diagnostics?.partialXmlTail ?? false}`,
+    ...(parseResult.diagnostics?.parserWarnings.map((line) => `Parser warning: ${line}`) ?? []),
     ...parseResult.logs.map((line) => `Parser: ${redactSequence(line, state.referenceSequence)}`),
     ...context.processLogs.map((line) => `Process: ${redactSequence(line, state.referenceSequence)}`)
   ];

@@ -63,6 +63,47 @@ describe("blast result parser skeleton", () => {
     expect(result.summary.maxLength).toBe(5);
   });
 
+  it("parses complete XML Hit blocks even when the XML tail is incomplete", () => {
+    const incompleteXml = `<?xml version="1.0"?>
+<BlastOutput>
+  <BlastOutput_iterations>
+    <Iteration>
+      <Iteration_hits>
+        <Hit>
+          <Hit_id>gi|1|gb|PARTIAL001.1|</Hit_id>
+          <Hit_def>Complete hit before truncated tail</Hit_def>
+          <Hit_accession>PARTIAL001</Hit_accession>
+          <Hit_hsps>
+            <Hsp>
+              <Hsp_bit-score>50</Hsp_bit-score>
+              <Hsp_evalue>1e-10</Hsp_evalue>
+              <Hsp_query-from>1</Hsp_query-from>
+              <Hsp_query-to>6</Hsp_query-to>
+              <Hsp_hit-from>10</Hsp_hit-from>
+              <Hsp_hit-to>15</Hsp_hit-to>
+              <Hsp_identity>6</Hsp_identity>
+              <Hsp_hseq>ATG-TA</Hsp_hseq>
+            </Hsp>
+          </Hit_hsps>
+        </Hit>
+        <Hit>
+          <Hit_id>truncated`;
+
+    const result = parseBlastResultSkeleton(incompleteXml, "XML");
+
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0]).toMatchObject({
+      accession: "PARTIAL001",
+      title: "Complete hit before truncated tail",
+      sequence: "ATGTA"
+    });
+    expect(result.diagnostics).toMatchObject({
+      completeHitBlocksSeen: 1,
+      partialXmlTail: true
+    });
+    expect(result.logs.some((line) => line.includes("completeHits=1"))).toBe(true);
+  });
+
   it("returns a dropped parse result for malformed JSON without throwing", () => {
     const result = parseBlastResultSkeleton("{not json", "JSON2_S");
 

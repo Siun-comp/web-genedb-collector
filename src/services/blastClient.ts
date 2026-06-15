@@ -41,9 +41,16 @@ export interface BlastResultDownload {
   downloadedAt: string;
   rawLength: number;
   text: string;
+  json2FailureReason?: string;
 }
 
 export type BlastFetch = typeof fetch;
+
+export interface BlastResultDownloadOptions {
+  hitlistSize?: number;
+  ncbiGi?: boolean;
+  timeoutMs?: number;
+}
 
 export class BlastClientError extends Error {
   readonly code: "failed_network" | "failed_cors" | "failed_ncbi" | "failed_parse" | "failed_unknown_rid" | "failed_timeout";
@@ -64,7 +71,7 @@ export function buildBlastRequestPreview(state: CollectionFormState): BlastReque
     TASK: state.task,
     QUERY: sequence.fasta,
     ENTREZ_QUERY: buildEntrezQuery(state.taxid),
-    HITLIST_SIZE: String(state.maxHits),
+    HITLIST_SIZE: formatPositiveInteger(state.maxHits),
     EXPECT: String(state.expect),
     WORD_SIZE: String(state.wordSize),
     tool: state.tool
@@ -157,7 +164,12 @@ export async function getBlastSearchInfo(rid: string, fetcher: BlastFetch = fetc
   };
 }
 
-export async function downloadBlastResult(rid: string, format: BlastResultFormat = "JSON2_S", fetcher: BlastFetch = fetch): Promise<BlastResultDownload> {
+export async function downloadBlastResult(
+  rid: string,
+  format: BlastResultFormat = "JSON2_S",
+  fetcher: BlastFetch = fetch,
+  options: BlastResultDownloadOptions = {}
+): Promise<BlastResultDownload> {
   const normalizedRid = rid.trim();
   if (!normalizedRid) {
     throw new BlastClientError("failed_unknown_rid", "RID가 비어 있어 BLAST 결과를 다운로드할 수 없습니다.");
@@ -167,6 +179,13 @@ export async function downloadBlastResult(rid: string, format: BlastResultFormat
   url.searchParams.set("CMD", "Get");
   url.searchParams.set("RID", normalizedRid);
   url.searchParams.set("FORMAT_TYPE", format);
+  const hitlistSize = options.hitlistSize;
+  if (Number.isInteger(hitlistSize) && hitlistSize !== undefined && hitlistSize > 0) {
+    url.searchParams.set("HITLIST_SIZE", String(hitlistSize));
+  }
+  if (options.ncbiGi) {
+    url.searchParams.set("NCBI_GI", "yes");
+  }
 
   const text = await fetchBlastText(
     fetcher,
@@ -175,7 +194,7 @@ export async function downloadBlastResult(rid: string, format: BlastResultFormat
       method: "GET"
     },
     `NCBI BLAST 결과 다운로드(${format})에 실패했습니다.`,
-    60000
+    options.timeoutMs ?? 60000
   );
 
   if (!text.trim()) {
@@ -191,12 +210,30 @@ export async function downloadBlastResult(rid: string, format: BlastResultFormat
   };
 }
 
-export async function downloadBlastResultWithFallback(rid: string, fetcher: BlastFetch = fetch): Promise<BlastResultDownload> {
+export async function downloadBlastResultWithFallback(
+  rid: string,
+  fetcher: BlastFetch = fetch,
+  options: BlastResultDownloadOptions = {}
+): Promise<BlastResultDownload> {
   try {
-    return await downloadBlastResult(rid, "JSON2_S", fetcher);
-  } catch {
-    return downloadBlastResult(rid, "XML", fetcher);
+    return await downloadBlastResult(rid, "JSON2_S", fetcher, options);
+  } catch (error) {
+    const xmlResult = await downloadBlastResult(rid, "XML", fetcher, options);
+    return {
+      ...xmlResult,
+      json2FailureReason: summarizeDownloadError(error)
+    };
   }
+}
+
+function formatPositiveInteger(value: number): string {
+  return Number.isInteger(value) && value > 0 ? String(value) : "";
+}
+
+function summarizeDownloadError(error: unknown): string {
+  if (error instanceof BlastClientError) return `${error.code}: ${error.message}`;
+  if (error instanceof Error) return error.message;
+  return "unknown JSON2_S download error";
 }
 
 export function nextPollDelayMs(rtoeSeconds?: number): number {

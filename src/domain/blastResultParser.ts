@@ -26,6 +26,13 @@ export interface BlastParseResult {
   dropped: DroppedHit[];
   summary: ParserSummary;
   logs: string[];
+  diagnostics?: BlastParseDiagnostics;
+}
+
+export interface BlastParseDiagnostics {
+  completeHitBlocksSeen: number;
+  partialXmlTail: boolean;
+  parserWarnings: string[];
 }
 
 export function parseBlastResultSkeleton(text: string, format: BlastResultFormat): BlastParseResult {
@@ -62,15 +69,25 @@ function parseJson2Skeleton(text: string, format: BlastResultFormat): BlastParse
 
 function parseXmlSkeleton(text: string, format: BlastResultFormat): BlastParseResult {
   const trimmed = text.trim();
-  if (!trimmed.startsWith("<") || !trimmed.endsWith(">")) {
-    return emptyResult(format, "XML parse failed");
+  if (!trimmed.startsWith("<")) {
+    return emptyResult(format, "XML parse failed: response does not look like XML", {
+      completeHitBlocksSeen: 0,
+      partialXmlTail: false,
+      parserWarnings: ["XML response does not start with '<'."]
+    });
   }
 
-  const hitBlocks = Array.from(text.matchAll(/<Hit\b[\s\S]*?<\/Hit>/g)).map((match) => match[0]);
   const records: ParsedHsp[] = [];
   const dropped: DroppedHit[] = [];
+  const parserWarnings: string[] = [];
+  const partialXmlTail = !/<\/BlastOutput>\s*$/.test(trimmed);
+  const hitPattern = /<Hit\b[\s\S]*?<\/Hit>/g;
+  let completeHitBlocksSeen = 0;
+  let match: RegExpExecArray | null;
 
-  for (const hitBlock of hitBlocks) {
+  while ((match = hitPattern.exec(text)) !== null) {
+    const hitBlock = match[0];
+    completeHitBlocksSeen += 1;
     const accession = readXmlTag(hitBlock, "Hit_accession") || readXmlTag(hitBlock, "Hit_id") || "unknown_accession";
     const title = readXmlTag(hitBlock, "Hit_def") || readXmlTag(hitBlock, "Hit_title") || accession;
     const hspBlock = hitBlock.match(/<Hsp\b[\s\S]*?<\/Hsp>/)?.[0];
@@ -82,7 +99,29 @@ function parseXmlSkeleton(text: string, format: BlastResultFormat): BlastParseRe
     }
   }
 
-  return buildResult(format, records, dropped, [`Parsed XML skeleton: hits=${hitBlocks.length}, records=${records.length}`]);
+  if (partialXmlTail) {
+    parserWarnings.push("XML response did not include closing </BlastOutput>; parsed complete Hit blocks only.");
+  }
+
+  if (completeHitBlocksSeen === 0) {
+    return emptyResult(format, "XML parse failed: no complete Hit blocks found", {
+      completeHitBlocksSeen,
+      partialXmlTail,
+      parserWarnings
+    });
+  }
+
+  return buildResult(
+    format,
+    records,
+    dropped,
+    [`Parsed XML blocks: completeHits=${completeHitBlocksSeen}, records=${records.length}, partialXmlTail=${partialXmlTail}`, ...parserWarnings],
+    {
+      completeHitBlocksSeen,
+      partialXmlTail,
+      parserWarnings
+    }
+  );
 }
 
 function parseJsonHsp(hsp: Record<string, unknown>, accession: string, title: string): ParsedHsp | null {
@@ -210,7 +249,7 @@ function removeGaps(sequence: string): string {
   return sequence.replace(/-/g, "").toUpperCase();
 }
 
-function buildResult(format: BlastResultFormat, records: ParsedHsp[], dropped: DroppedHit[], logs: string[]): BlastParseResult {
+function buildResult(format: BlastResultFormat, records: ParsedHsp[], dropped: DroppedHit[], logs: string[], diagnostics?: BlastParseDiagnostics): BlastParseResult {
   const lengths = records.map((record) => record.sequence.length);
   return {
     format,
@@ -226,10 +265,11 @@ function buildResult(format: BlastResultFormat, records: ParsedHsp[], dropped: D
       keywordDroppedCount: 0,
       minLength: lengths.length ? Math.min(...lengths) : 0,
       maxLength: lengths.length ? Math.max(...lengths) : 0
-    }
+    },
+    diagnostics
   };
 }
 
-function emptyResult(format: BlastResultFormat, reason: string): BlastParseResult {
-  return buildResult(format, [], [{ reason }], [reason]);
+function emptyResult(format: BlastResultFormat, reason: string, diagnostics?: BlastParseDiagnostics): BlastParseResult {
+  return buildResult(format, [], [{ reason }], [reason], diagnostics);
 }

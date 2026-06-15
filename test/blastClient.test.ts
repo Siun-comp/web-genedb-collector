@@ -129,13 +129,15 @@ describe("blast client helpers", () => {
 
   it("downloads BLAST results without sending QUERY or SearchInfo format object", async () => {
     const fetcher = vi.fn(async () => new Response('{"BlastOutput2":[]}', { status: 200 }));
-    const result = await downloadBlastResult("RID123", "JSON2_S", fetcher as typeof fetch);
+    const result = await downloadBlastResult("RID123", "JSON2_S", fetcher as typeof fetch, { hitlistSize: 50000, ncbiGi: true });
     const [url, init] = (fetcher.mock.calls as unknown as Array<[RequestInfo | URL, RequestInit?]>)[0];
     const parsedUrl = new URL(String(url));
 
     expect(parsedUrl.searchParams.get("CMD")).toBe("Get");
     expect(parsedUrl.searchParams.get("RID")).toBe("RID123");
     expect(parsedUrl.searchParams.get("FORMAT_TYPE")).toBe("JSON2_S");
+    expect(parsedUrl.searchParams.get("HITLIST_SIZE")).toBe("50000");
+    expect(parsedUrl.searchParams.get("NCBI_GI")).toBe("yes");
     expect(parsedUrl.searchParams.has("QUERY")).toBe(false);
     expect(parsedUrl.searchParams.has("FORMAT_OBJECT")).toBe(false);
     expect(init?.method).toBe("GET");
@@ -148,13 +150,16 @@ describe("blast client helpers", () => {
       .mockResolvedValueOnce(new Response("server error", { status: 500 }))
       .mockResolvedValueOnce(new Response("<BlastOutput></BlastOutput>", { status: 200 }));
 
-    const result = await downloadBlastResultWithFallback("RID123", fetcher as typeof fetch);
+    const result = await downloadBlastResultWithFallback("RID123", fetcher as typeof fetch, { hitlistSize: 50000, ncbiGi: true });
     const calls = fetcher.mock.calls as unknown as Array<[RequestInfo | URL, RequestInit?]>;
 
     expect(new URL(String(calls[0][0])).searchParams.get("FORMAT_TYPE")).toBe("JSON2_S");
     expect(new URL(String(calls[1][0])).searchParams.get("FORMAT_TYPE")).toBe("XML");
+    expect(new URL(String(calls[1][0])).searchParams.get("HITLIST_SIZE")).toBe("50000");
+    expect(new URL(String(calls[1][0])).searchParams.get("NCBI_GI")).toBe("yes");
     expect(result.format).toBe("XML");
     expect(result.text).toBe("<BlastOutput></BlastOutput>");
+    expect(result.json2FailureReason).toContain("failed_ncbi");
   });
 
   it("rejects result download when RID is empty", async () => {

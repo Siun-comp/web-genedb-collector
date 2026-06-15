@@ -65,6 +65,7 @@ describe("collection form validation", () => {
     expect(validateCollectionForm({ ...validState, maxHits: 90000 }).warnings.some((message) => message.field === "maxHits")).toBe(true);
     expect(validateCollectionForm({ ...validState, maxHits: 100000 }).canSubmit).toBe(true);
     expect(validateCollectionForm({ ...validState, maxHits: 100001 }).canSubmit).toBe(false);
+    expect(validateCollectionForm({ ...validState, maxHits: Number.NaN }).canSubmit).toBe(false);
   });
 
   it("blocks invalid expect and word size values", () => {
