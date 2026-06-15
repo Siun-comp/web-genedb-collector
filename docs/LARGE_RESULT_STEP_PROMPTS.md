@@ -95,6 +95,8 @@ web-genedb-collector/docs/LARGE_RESULT_STABILITY_PLAN.md를 기준으로 Phase 9
 
 ## Phase 9D Prompt: ZIP Risk Controls For Large Results
 
+상태: 완료. 구현 기준은 ZIP source size estimate, full provenance ZIP 1차 시도, 실패 시 `records.jsonl` 제외 summary-only ZIP 자동 1회 fallback, omission reason 기록이다.
+
 ```text
 web-genedb-collector/docs/LARGE_RESULT_STABILITY_PLAN.md를 기준으로 Phase 9D를 구현하라.
 
@@ -129,6 +131,7 @@ web-genedb-collector/docs/LARGE_RESULT_STABILITY_PLAN.md를 기준으로 Phase 9
 구현:
 - blastParser.worker.ts placeholder를 실제 parser worker로 교체하라.
 - main thread는 raw result를 화면/log/IndexedDB에 저장하지 말고 worker에만 전달하라.
+- Phase 9D의 ZIP source estimate와 summary-only ZIP fallback은 유지하라.
 - worker는 progress event로 parsedHitCount, droppedCount, partialXmlTail 여부를 보낸다.
 - parser complete 후 output bundle 생성을 이어간다.
 - cancellation hook은 가능하면 추가하되, 구현 복잡도가 크면 문서화된 후속 작업으로 남긴다.

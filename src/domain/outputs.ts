@@ -13,6 +13,7 @@ export interface OutputContext {
   queryLength?: number;
   queryHash?: string;
   resultFallback?: BlastResultFallback;
+  fullProvenanceOmissionReason?: "user_disabled" | "zip_degradation_after_primary_failure";
   processLogs: string[];
 }
 
@@ -95,6 +96,7 @@ export function buildRunInfo(
     responseLength?: number;
     fallback?: BlastResultFallback;
     completeness?: ResultCompletenessSummary;
+    fullProvenanceOmissionReason?: OutputContext["fullProvenanceOmissionReason"];
   }
 ) {
   return {
@@ -115,7 +117,8 @@ export function buildRunInfo(
       use_kw_filter: state.keywordFilterEnabled,
       keywords: state.keywords,
       exclude_ambiguous: state.excludeAmbiguousN,
-      full_provenance_records_jsonl: state.includeFullProvenance !== false
+      full_provenance_records_jsonl: state.includeFullProvenance !== false,
+      full_provenance_omission_reason: state.includeFullProvenance === false ? (resultDetails?.fullProvenanceOmissionReason ?? "user_disabled") : null
     },
     Counts: counts ?? null,
     Result: resultDetails
@@ -192,7 +195,8 @@ export function buildGeneDbOutputBundle(state: CollectionFormState, parseResult:
     format: context.resultFormat ?? parseResult.format,
     responseLength: context.resultRawLength,
     fallback: context.resultFallback,
-    completeness
+    completeness,
+    fullProvenanceOmissionReason: context.fullProvenanceOmissionReason
   });
   const meta = buildMetaJson(state, parseResult, context, summary, outputRecords, queryLength, queryHash, lengthBounds, fileNames);
   const log = buildProcessLog(state, parseResult, context, summary, queryLength, queryHash);
@@ -312,7 +316,8 @@ function buildMetaJson(
         fileName: state.includeFullProvenance === false ? null : `${safeTaskName(state.taskName)}_records.jsonl`,
         recordCount: records.length,
         parserDroppedCount: parseResult.dropped.length,
-        sequenceIncluded: false
+        sequenceIncluded: false,
+        omissionReason: state.includeFullProvenance === false ? (context.fullProvenanceOmissionReason ?? "user_disabled") : null
       }
     },
     resultSequenceNormalization: parseResult.diagnostics?.resultSequenceNormalization ?? null,
@@ -330,7 +335,8 @@ function buildMetaJson(
     recordSummary: {
       outputRecordCount: records.length,
       parserDroppedCount: parseResult.dropped.length,
-      fullProvenanceMovedTo: state.includeFullProvenance === false ? null : `${safeTaskName(state.taskName)}_records.jsonl`
+      fullProvenanceMovedTo: state.includeFullProvenance === false ? null : `${safeTaskName(state.taskName)}_records.jsonl`,
+      fullProvenanceOmissionReason: state.includeFullProvenance === false ? (context.fullProvenanceOmissionReason ?? "user_disabled") : null
     }
   };
 }
@@ -354,7 +360,7 @@ function buildProcessLog(
     `Taxid=${state.taxid.trim()}`,
     `Result format=${context.resultFormat ?? parseResult.format}`,
     `Result response length=${context.resultRawLength ?? "unknown"}`,
-    `Metadata mode=summary_only, fullProvenance=${state.includeFullProvenance === false ? "omitted" : "records_jsonl"}, sequencesInProvenance=false`,
+    `Metadata mode=summary_only, fullProvenance=${state.includeFullProvenance === false ? "omitted" : "records_jsonl"}, omissionReason=${state.includeFullProvenance === false ? (context.fullProvenanceOmissionReason ?? "user_disabled") : "none"}, sequencesInProvenance=false`,
     ...(context.resultFallback ? [`Result fallback status=${context.resultFallback.status}, primary=${context.resultFallback.primaryFormat}, fallback=${context.resultFallback.fallbackFormat}`] : []),
     ...(context.resultFallback?.primaryFailure
       ? [

@@ -201,11 +201,12 @@ export function restoreCollectionState(snapshot: PersistedJobSnapshot): Collecti
 
 export function sanitizeLogs(logs: string[], rawSequence: string): string[] {
   const cleaned = cleanSequence(rawSequence);
-  if (!cleaned || cleaned.length < 8) {
-    return logs.slice(0, 20);
-  }
-  const pattern = new RegExp(escapeRegExp(cleaned), "gi");
-  return logs.slice(0, 20).map((line) => line.replace(pattern, "[redacted_query_sequence]").replace(/RAW_BLAST_RESULT_TEXT/gi, "[redacted_raw_result]"));
+  const pattern = cleaned && cleaned.length >= 8 ? new RegExp(escapeRegExp(cleaned), "gi") : null;
+  return logs.slice(0, 20).map((line) => {
+    const withoutMarkers = line.replace(/RAW_BLAST_RESULT_TEXT/gi, "[redacted_raw_result]");
+    const withoutRawQuery = pattern ? withoutMarkers.replace(pattern, "[redacted_query_sequence]") : withoutMarkers;
+    return withoutRawQuery.replace(/\b[ACGTUNRYSWKMBDHV]{20,}\b/gi, "[redacted_sequence]");
+  });
 }
 
 export function isPersistedJobSnapshot(value: unknown): value is PersistedJobSnapshot {

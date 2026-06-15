@@ -260,15 +260,40 @@ describe("output helpers", () => {
       fileName: null,
       recordCount: 6,
       parserDroppedCount: 1,
-      sequenceIncluded: false
+      sequenceIncluded: false,
+      omissionReason: "user_disabled"
     });
     expect(meta.recordSummary).toMatchObject({
       outputRecordCount: 6,
       parserDroppedCount: 1,
-      fullProvenanceMovedTo: null
+      fullProvenanceMovedTo: null,
+      fullProvenanceOmissionReason: "user_disabled"
     });
     expect(runInfo.Options.full_provenance_records_jsonl).toBe(false);
+    expect(runInfo.Options.full_provenance_omission_reason).toBe("user_disabled");
     expect(bundle.processLog).toContain("fullProvenance=omitted");
+    expect(bundle.processLog).toContain("omissionReason=user_disabled");
+  });
+
+  it("marks full provenance omission caused by ZIP degradation", () => {
+    const bundle = buildGeneDbOutputBundle({ ...baseState(), includeFullProvenance: false }, parseResult(), {
+      ...outputContext(),
+      fullProvenanceOmissionReason: "zip_degradation_after_primary_failure"
+    });
+    const meta = JSON.parse(bundle.metaJson);
+    const runInfo = JSON.parse(bundle.runInfoJson);
+
+    expect(bundle.recordsJsonl).toBeNull();
+    expect(meta.outputManifest.fullProvenance).toMatchObject({
+      included: false,
+      fileName: null,
+      omissionReason: "zip_degradation_after_primary_failure",
+      sequenceIncluded: false
+    });
+    expect(meta.recordSummary.fullProvenanceOmissionReason).toBe("zip_degradation_after_primary_failure");
+    expect(runInfo.Options.full_provenance_records_jsonl).toBe(false);
+    expect(runInfo.Options.full_provenance_omission_reason).toBe("zip_degradation_after_primary_failure");
+    expect(bundle.processLog).toContain("omissionReason=zip_degradation_after_primary_failure");
   });
 
   it("keeps summary meta size independent from record-level provenance volume", () => {

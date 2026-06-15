@@ -65,6 +65,23 @@ describe("storage snapshot safety", () => {
     expect(sanitizeLogs(["lower aaaaccccggggtttt leak"], "AAAACCCCGGGGTTTT")).toEqual(["lower [redacted_query_sequence] leak"]);
   });
 
+  it("redacts sensitive data from failed_zip snapshots even without restored raw query", () => {
+    const snapshot = buildJobSnapshot(
+      { ...stateWithSensitiveValues(), referenceSequence: "" },
+      {
+        status: "failed_zip",
+        rid: "RID123",
+        logs: ["Error failed_zip: Quota failed AAAACCCCGGGGTTTTAAAACCCC RAW_BLAST_RESULT_TEXT"]
+      }
+    );
+    const serialized = JSON.stringify(snapshot);
+
+    expect(serialized).not.toContain("AAAACCCCGGGGTTTT");
+    expect(serialized).not.toContain("RAW_BLAST_RESULT_TEXT");
+    expect(serialized).toContain("[redacted_sequence]");
+    expect(serialized).toContain("[redacted_raw_result]");
+  });
+
   it("validates persisted snapshot shape", () => {
     const snapshot = buildJobSnapshot(stateWithSensitiveValues(), { status: "waiting", rid: "RID123", logs: [] });
 

@@ -41,6 +41,26 @@ Phase 9C metadata split을 구현했다.
 - https://blast.ncbi.nlm.nih.gov/doc/blast-help/urlapi.html
 - https://www.ncbi.nlm.nih.gov/home/develop/api/
 
+## 2026-06-15 Phase 9D 완료 상태
+
+Phase 9D ZIP risk controls를 구현했다.
+
+- ZIP 생성 전 source text byte estimate를 계산한다.
+- estimate에는 total source bytes, records.jsonl bytes, largest source file, risk level, warning을 포함한다.
+- output preview와 process log에는 estimate/risk를 표시한다.
+- full provenance ZIP 생성이 실패하면 `records.jsonl`을 제외한 summary-only ZIP을 자동으로 1회 재시도한다.
+- fallback ZIP 성공 시 파일명은 `<task>_summary_only.zip`이며, FASTA, summary meta, run_info, process.log는 유지한다.
+- fallback omission reason은 `zip_degradation_after_primary_failure`로 meta/run_info/process.log/UI에 남긴다.
+- ZIP manifest와 실제 bundle content가 불일치하면 오류로 처리한다.
+- ZIP error와 IndexedDB logs는 long nucleotide-like string과 raw result marker를 redaction한다.
+
+검증:
+
+- `npm run typecheck` 통과
+- `npm test` 통과, 9 files / 90 tests
+- `npm run build` 통과
+- 로컬 브라우저 smoke check 통과
+
 ## 1. 현재 상태 요약
 
 이미 구현된 것:
@@ -60,12 +80,12 @@ Phase 9C metadata split을 구현했다.
 - XML tail이 불완전해도 완성된 `<Hit>...</Hit>` block은 회수한다.
 - `partialXmlTail=true`, `completeHitBlocksSeen`을 UI/log/meta에 남긴다.
 - SUP12 setting과 Default setting을 버튼으로 전환할 수 있다.
+- ZIP 생성 전 size/risk estimate를 표시하고, full provenance ZIP 실패 시 summary-only ZIP으로 회수한다.
 
 남은 문제:
 
-- `meta.json`이 record 수에 비례해 매우 커진다.
 - 대용량 result는 main thread에서 raw text -> parse -> records -> metadata -> ZIP을 만드는 과정에서 메모리 압박이 크다.
-- ZIP 생성 단계도 큰 FASTA 문자열과 metadata 문자열을 다시 복사하므로, parser 성공 후 ZIP 생성에서 실패할 수 있다.
+- ZIP 생성 단계의 records.jsonl 부담은 줄였지만, 큰 FASTA 문자열과 parser record 배열 자체의 메모리 부담은 여전히 남아 있다.
 - 100,000 hit 요청은 보장값이 아니며, serverless browser app에서 완전 회수를 보장할 방법은 없다.
 
 ## 2. 목표 상태
@@ -266,19 +286,19 @@ FASTA sequence 자체는 JSONL에 넣지 않는다.
 - provenance는 JSONL에서 accession/HSP provenance를 유지한다.
 - FASTA header는 기존 GeneDB 수준을 유지한다.
 
-### Phase 9D. ZIP risk controls
+### Phase 9D. ZIP risk controls 완료
 
 작업:
 
 - ZIP 생성 전 output size estimate 추가
 - ZIP 생성 실패를 parser 실패와 구분
-- FASTA-only ZIP, summary-only ZIP, provenance omitted ZIP fallback 검토
-- ZIP manifest에 포함/제외 파일과 제외 사유 기록
+- summary-only/provenance omitted ZIP fallback 구현
+- ZIP manifest/content consistency 검사와 제외 사유 기록
 
-완료 기준:
+완료 결과:
 
 - parser 성공 후 ZIP 실패가 전체 분석 실패처럼 보이지 않는다.
-- 대용량 provenance 때문에 ZIP이 실패해도 aligned FASTA를 받을 수 있는 fallback 경로가 있다.
+- 대용량 provenance 때문에 ZIP이 실패해도 aligned FASTA와 summary meta를 받을 수 있는 fallback 경로가 있다.
 - process.log와 UI는 어떤 파일이 생략되었는지 명확히 표시한다.
 
 ### Phase 9E. Worker-based large parser

@@ -36,7 +36,14 @@ import {
   type PersistedJobSnapshot,
   type StoredQuerySummary
 } from "./services/storage";
-import { buildZipManifest, createGeneDbZip, downloadBlob } from "./services/zipWriter";
+import {
+  GeneDbZipDegradationError,
+  buildZipManifest,
+  createGeneDbZipWithDegradation,
+  downloadBlob,
+  estimateGeneDbZipSize,
+  type ZipSizeEstimate
+} from "./services/zipWriter";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -642,6 +649,11 @@ async function downloadReadyResult(): Promise<void> {
       resultFallback: result.fallback,
       processLogs: logsBeforeOutput
     });
+    const zipEstimate = estimateGeneDbZipSize(outputBundle);
+    const logsWithEstimate = appendLog(
+      logsBeforeOutput,
+      `ZIP estimate. uncompressedBytes=${zipEstimate.totalUncompressedBytes}, recordsJsonlBytes=${zipEstimate.recordsJsonlBytes}, risk=${zipEstimate.riskLevel}, omitProvenanceRecommended=${zipEstimate.omitProvenanceRecommended}`
+    );
     const completeHitBlocks = parseResult.diagnostics?.completeHitBlocksSeen;
     const partialXmlTail = Boolean(parseResult.diagnostics?.partialXmlTail);
     job = {
@@ -658,7 +670,7 @@ async function downloadReadyResult(): Promise<void> {
       detail: `Aligned=${outputBundle.summary.savedCount}, N 분리=${outputBundle.summary.ambiguousCount}, 제외=${outputBundle.summary.droppedCount}.`,
       action: "결과를 확인한 뒤 ZIP 다운로드를 누르세요.",
       logs: appendLog(
-        logsBeforeOutput,
+        logsWithEstimate,
         `Result downloaded and output prepared. rid=${rid}, format=${result.format}, responseLength=${result.rawLength}, aligned=${outputBundle.summary.savedCount}, ambiguous=${outputBundle.summary.ambiguousCount}, dropped=${outputBundle.summary.droppedCount}, completeHitBlocks=${completeHitBlocks ?? "unknown"}, partialXmlTail=${partialXmlTail}${partialXmlTail ? ", completeness=완성 Hit block만 회수됨" : ""}`
       )
     };
@@ -677,45 +689,69 @@ function formatJson2FallbackSuccess(fallback: BlastResultFallback, legacyReason?
 
 async function handleDownloadZip(): Promise<void> {
   if (!job.outputBundle || !job.parseResult || job.isBusy) return;
-  const bundle = buildGeneDbOutputBundle(state, job.parseResult, outputContext());
-  const fileName = `${safeTaskName(state.taskName)}.zip`;
+  const baseContext = outputContext();
+  const bundle = buildGeneDbOutputBundle(state, job.parseResult, baseContext);
+  const fallbackBundle =
+    state.includeFullProvenance !== false
+      ? buildGeneDbOutputBundle(
+          { ...state, includeFullProvenance: false },
+          job.parseResult,
+          {
+            ...baseContext,
+            fullProvenanceOmissionReason: "zip_degradation_after_primary_failure",
+            processLogs: [...baseContext.processLogs, "ZIP degradation candidate prepared. records.jsonl will be omitted only if primary ZIP generation fails."]
+          }
+        )
+      : undefined;
+  const estimate = estimateGeneDbZipSize(bundle);
   job = {
     ...job,
     status: "generatingZip",
     isBusy: true,
     outputBundle: bundle,
     title: "ZIP 생성 중",
-    detail:
-      state.includeFullProvenance !== false
-        ? "Aligned FASTA, ambiguous FASTA, summary meta.json, records.jsonl, run_info.json, process.log를 ZIP으로 묶고 있습니다."
-        : "Aligned FASTA, ambiguous FASTA, summary meta.json, run_info.json, process.log를 ZIP으로 묶고 있습니다. records.jsonl은 사용자 설정으로 제외되었습니다.",
-    action: "브라우저 다운로드가 시작될 때까지 기다리세요."
+    detail: `${formatZipEstimate(estimate)}. ${state.includeFullProvenance !== false ? "Full provenance records.jsonl will be tried first." : "records.jsonl is disabled by the current option."}`,
+    action: "브라우저 다운로드가 시작될 때까지 기다리세요.",
+    logs: appendLog(job.logs, `ZIP generation started. uncompressedBytes=${estimate.totalUncompressedBytes}, recordsJsonlBytes=${estimate.recordsJsonlBytes}, risk=${estimate.riskLevel}`)
   };
   render();
 
   try {
-    const blob = await createGeneDbZip(bundle);
+    const result = await createGeneDbZipWithDegradation(bundle, fallbackBundle);
+    const blob = result.blob;
+    const fileName = result.mode === "primary" ? `${safeTaskName(state.taskName)}.zip` : `${safeTaskName(state.taskName)}_summary_only.zip`;
+    const logs = result.logs.reduce((currentLogs, line) => appendLog(currentLogs, line), job.logs);
+    const modeDetail =
+      result.mode === "primary"
+        ? `${fileName} 다운로드를 시작했습니다.`
+        : `${fileName} 다운로드를 시작했습니다. 1차 full ZIP 생성이 실패해 records.jsonl을 제외한 summary-only ZIP으로 회수했습니다.`;
     downloadBlob(blob, fileName);
     job = {
       ...job,
       status: "done",
       isBusy: false,
-      title: "ZIP 다운로드 시작",
-      detail: `${fileName} 다운로드를 시작했습니다.`,
-      action: "다운로드 폴더에서 ZIP 파일을 확인하세요.",
-      logs: appendLog(job.logs, `ZIP generated. file=${fileName}, bytes=${blob.size}`)
+      outputBundle: result.bundle,
+      title: result.mode === "primary" ? "ZIP 다운로드 시작" : "ZIP 다운로드 시작 (records.jsonl 제외)",
+      detail: modeDetail,
+      action: result.mode === "primary" ? "다운로드 폴더에서 ZIP 파일을 확인하세요." : "FASTA와 summary meta는 포함되어 있습니다. full provenance records.jsonl은 이 ZIP에서 제외되었습니다.",
+      logs: appendLog(logs, `ZIP generated. file=${fileName}, bytes=${blob.size}, mode=${result.mode}, uncompressedBytes=${result.estimate.totalUncompressedBytes}`)
     };
     persistSnapshot();
   } catch (error) {
-    const message = error instanceof Error ? error.message : "알 수 없는 ZIP 생성 오류가 발생했습니다.";
+    const message = formatZipFailure(error);
+    const logs =
+      error instanceof GeneDbZipDegradationError
+        ? appendLog(appendLog(job.logs, `Error failed_zip primary=${error.primaryErrorMessage}`), `Error failed_zip fallback=${error.fallbackErrorMessage ?? "not_attempted"}`)
+        : appendLog(job.logs, `Error failed_zip: ${message}`);
     job = {
       ...job,
       status: "failed_zip",
       isBusy: false,
       title: "ZIP 생성 실패",
       detail: message,
-      action: "브라우저 메모리 또는 다운로드 권한을 확인하고 hit 수를 낮춰 다시 시도하세요.",
-      logs: appendLog(job.logs, `Error failed_zip: ${message}`)
+      outputBundle: bundle,
+      action: "Parser output is still available in this screen. Try disabling full provenance records.jsonl or lowering max hits, then download ZIP again.",
+      logs
     };
     persistSnapshot();
   }
@@ -766,6 +802,7 @@ function outputContext(): OutputContext {
     resultDownloadedAt: job.resultDownloadedAt,
     resultRawLength: job.resultRawLength,
     resultFallback: job.resultFallback,
+    fullProvenanceOmissionReason: state.includeFullProvenance === false ? "user_disabled" : undefined,
     queryLength: job.restoredQuery?.length,
     queryHash: job.restoredQuery?.hash,
     processLogs: job.logs
@@ -1036,8 +1073,13 @@ function renderOutputBundle(bundle?: GeneDbOutputBundle): string {
     bundle.recordsJsonl === null
       ? "records.jsonl omitted; summary meta only"
       : `${provenanceRows.toLocaleString()} records.jsonl rows; sequence bodies omitted`;
+  const zipEstimate = estimateGeneDbZipSize(bundle);
+  const zipWarnings = zipEstimate.warnings.length
+    ? `<div class="warning">${zipEstimate.warnings.map(escapeHtml).join("<br>")}</div>`
+    : "";
 
   return `
+    ${zipWarnings}
     <div class="status-box">
       ${statusLine("BLAST hit / usable HSP", `${bundle.records.length.toLocaleString()} usable HSP`)}
       ${statusLine("Aligned FASTA 저장", `${bundle.summary.savedCount.toLocaleString()} records`)}
@@ -1049,6 +1091,9 @@ function renderOutputBundle(bundle?: GeneDbOutputBundle): string {
       ${statusLine("Unique sequence 참고값", `${bundle.summary.uniqueCount.toLocaleString()} (dedup output 아님)`)}
       ${statusLine("Aligned 길이 범위", `${bundle.summary.minLength.toLocaleString()}-${bundle.summary.maxLength.toLocaleString()} bp`)}
       ${statusLine("Provenance", provenanceStatus)}
+      ${statusLine("ZIP source estimate", formatZipEstimate(zipEstimate))}
+      ${statusLine("ZIP risk", zipEstimate.riskLevel)}
+      ${statusLine("Largest ZIP source file", zipEstimate.largestFile ? `${zipEstimate.largestFile.name} (${formatBytes(zipEstimate.largestFile.bytes)})` : "-")}
     </div>
   `;
 }
@@ -1124,6 +1169,32 @@ function formatFallbackStatus(fallback?: BlastResultFallback): string {
     return `JSON2_S failed, XML fallback succeeded${reason}`;
   }
   return "JSON2_S failed, XML fallback failed";
+}
+
+function formatZipEstimate(estimate: ZipSizeEstimate): string {
+  const provenance = estimate.recordsJsonlBytes > 0 ? `, records.jsonl ${formatBytes(estimate.recordsJsonlBytes)}` : ", records.jsonl omitted";
+  return `${formatBytes(estimate.totalUncompressedBytes)} source text${provenance}`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  }
+  if (bytes >= 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${bytes.toLocaleString()} bytes`;
+}
+
+function formatZipFailure(error: unknown): string {
+  if (error instanceof GeneDbZipDegradationError) {
+    const fallback = error.fallbackErrorMessage ? ` Fallback summary-only ZIP also failed: ${error.fallbackErrorMessage}` : " No fallback ZIP was available.";
+    return `Parser output was prepared, but ZIP generation failed. Primary full ZIP failed: ${error.primaryErrorMessage}.${fallback}`;
+  }
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  return rawMessage
+    .replace(/RAW_BLAST_RESULT_TEXT/gi, "[redacted_raw_result]")
+    .replace(/\b[ACGTUNRYSWKMBDHV]{20,}\b/gi, "[redacted_sequence]");
 }
 
 function option(value: string, selected: string): string {
